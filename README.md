@@ -1,15 +1,39 @@
 # agent-harness
 
-This repository is a template for meta workspaces: a repo with no product code that groups an
+This repository is the upstream harness for meta workspaces: a repo with no product code that groups an
 organization's repositories so AI agents get organization-wide context, cross-repo
-[OpenSpec](https://github.com/Fission-AI/OpenSpec) specs and shared skills.
+[OpenSpec](https://github.com/Fission-AI/OpenSpec) specs and shared skills. Each meta is a
+copy that keeps this repository's history, so harness updates arrive with a merge.
 
-## Create a meta repo from this template
+## Create a meta repo
 
-1. `gh repo create <org>/<name> --template <owner>/agent-harness --private --clone`
-2. Edit `repos.json`: set `org`, list the repos and their `products`.
-3. `make doctor && make sync && make check`
-4. Without Linear, delete the `[linear]` lines of `openspec/config.yaml`, the `openspec-linear-sync` skill and `docs/agents/issue-tracker.md`. With it, the team is resolved with the user at the first sync.
+1. Create an empty private repo for the meta: `gh repo create <org>/<name> --private`.
+2. Clone the harness under the meta's name and point it at the new repo, keeping the harness as
+   a second remote:
+
+   ```bash
+   git clone git@github.com:<owner>/agent-harness.git <name> && cd <name>
+   git remote rename origin harness
+   git remote add origin git@github.com:<org>/<name>.git
+   git push -u origin main
+   ```
+
+3. On a branch, edit `repos.json`: set `org`, list the repos and, if you use them, their `products`.
+4. `make doctor && make sync && make check`, then open the meta's first PR.
+5. Without Linear, delete the `[linear]` lines of `openspec/config.yaml`, the `openspec-linear-sync` skill and `docs/agents/issue-tracker.md`. With it, the team is resolved with the user at the first sync.
+
+## Bring harness updates into a meta
+
+```bash
+git fetch harness
+git checkout -b chore/harness-update origin/main
+git merge harness/main
+make openspec && make check && make test
+```
+
+Conflicts can only come from instance-owned files (below) or from harness files the meta
+changed on purpose, such as the Linear adapter removed in step 5: keep the meta's side for those.
+Open the result as a PR in the meta.
 
 ## Harness files and your files
 
@@ -22,7 +46,7 @@ organization's repositories so AI agents get organization-wide context, cross-re
 | MCP config files (`.mcp.json`, `.codex/config.toml`, `opencode.json`) | `env/` |
 | Guardrail wiring (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/guard.js`) | |
 
-Improve harness files in the template first, then bring them to each meta.
+Improve harness files here first, with a PR to this repository, then merge them into each meta.
 
 ## What a meta repo does
 
@@ -373,8 +397,8 @@ may not load:
 Both run inside one repository (`repos/<name>`, on a branch, reading that repo's own
 instructions first); the rule, its tests and its doc are committed there and reach the default
 branch through that repo's PR. A convention about this workspace that should hold in every meta
-becomes a rule in the template's `scripts/check.py` (propose it to the template from a meta; do
-not fork the script); one no rule can check goes to `docs/conventions/` of the meta.
+becomes a rule in the harness's `scripts/check.py` (propose it to the harness repository from a
+meta; do not fork the script); one no rule can check goes to `docs/conventions/` of the meta.
 `docs/agents/conventions.md` says which case is which.
 
 ## Skills

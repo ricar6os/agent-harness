@@ -43,7 +43,7 @@ Never hand-edit the generated `openspec-*` skills; run `make openspec`.
 
 ## The OpenSpec schema
 
-`openspec/schemas/spec-plan/` is harness-owned: change it in the template, keep it agnostic of
+`openspec/schemas/spec-plan/` is harness-owned: change it in the harness repository, keep it agnostic of
 where repos live (that goes in the `context:` of `openspec/config.yaml`), and run
 `openspec schema validate spec-plan` after editing it.
 

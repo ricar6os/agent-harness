@@ -1081,12 +1081,12 @@ def check_guardrails(root):
     script = root / GUARD_SCRIPT
     if not script.is_file():
         out.append(Violation("guardrails", GUARD_SCRIPT, None,
-                             "missing. Restore it from the harness template; every agent hook calls it."))
+                             "missing. Restore it from the harness repository; every agent hook calls it."))
     elif not os.access(str(script), os.X_OK):
         out.append(Violation("guardrails", GUARD_SCRIPT, None, "is not executable. Run `chmod +x %s`." % GUARD_SCRIPT))
     for agent, rel, kind, flag in GUARD_WIRING:
         path = root / rel
-        restore = "Restore it from the harness template so %s runs %s before each tool call." % (agent, GUARD_SCRIPT)
+        restore = "Restore it from the harness repository so %s runs %s before each tool call." % (agent, GUARD_SCRIPT)
         if not path.is_file():
             out.append(Violation("guardrails", rel, None, "missing. " + restore))
             continue
