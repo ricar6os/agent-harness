@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"$PWD\"; while :; do if [ -f \"$d/repos.json\" ] && [ -f \"$d/scripts/guard.py\" ]; then exec python3 \"$d/scripts/guard.py\" --agent codex; fi; if [ \"$d\" = / ]; then exit 0; fi; d=$(dirname \"$d\"); done",
+            "timeout": 30,
+            "statusMessage": "Checking guardrails"
+          }
+        ]
+      }
+    ]
+  }
+}

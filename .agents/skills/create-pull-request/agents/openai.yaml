@@ -1,0 +1,6 @@
+interface:
+  display_name: "Create pull request"
+  short_description: "Write the title and body of a pull request, with evidence, deploy steps and rollback"
+  default_prompt: "Create the pull request for this branch following the create-pull-request skill"
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,58 @@
+schema: spec-driven
+
+# The generated skills are versioned in this repo so every clone and CI gets the same ones.
+skillsScope: project
+
+context: |
+  Every change belongs to exactly one OpenSpec product, recorded as
+  `x-product: <slug>` in `.openspec.yaml` (OpenSpec 2 keeps only `x-` keys without a
+  warning). Resolve the user's selection, else the recorded
+  product; if missing, list products from repos.json and GLOSSARY-MAP.md and ask. Announce it.
+  Reconcile conflicting selections before writing. Never infer a product from code or a
+  Linear project name. Split work affecting multiple products into separate changes.
+  Delta specs use `specs/<slug>/<capability>/spec.md`; main specs use
+  `openspec/specs/<slug>/<capability>/spec.md`. repos.json products lists identify the
+  product's repos; omitted products means shared. Shared-repo changes must remain within
+  the selected product's scope. scripts/init.sh --product <slug> filters by product.
+  Each change corresponds one-to-one to a Linear project, separately recorded as
+  `x-linear-project: {id, url}` in `.openspec.yaml`. The Linear project has exactly one
+  project label in the group `Product`, identifying the OpenSpec product. Resolve the
+  user's chosen Linear project or the recorded id; otherwise ask which to use or whether
+  to create one. Create a project only when requested and its team is known. Local planning
+  may precede this binding; synchronization requires it. Never share a Linear project
+  between changes or distribute one change across Linear projects.
+  The custom openspec-linear-sync skill owns the mapping: each objective-based task group
+  is an Epic issue, and each individual task is a child issue in that same Linear project.
+
+rules:
+  proposal:
+    - "Before writing, record exactly one OpenSpec product as x-product: <slug> in .openspec.yaml. Use the user's selection or existing metadata; otherwise list workspace products and ask."
+    - A change that touches more than one repo needs a design.md (the schema treats design as optional).
+    - The Impact section names the affected repos and contracts within the selected product; each contract's shape and the deployment order live in the design. Shared repos are allowed within that scope; cross-product impact requires separate changes, with no exception.
+  design:
+    - "A change that touches more than one repo has a `## Contracts` section: one entry per contract that crosses a repo boundary, naming the repo that provides it and every repo that consumes it."
+    - "Describe a contract as its consumer sees it, no implementation: for an HTTP endpoint the method, path, request and response fields; for an event its name and payload fields; for a table or view another repo reads its columns and types; for a package its exported signatures."
+    - "List a contract when the change adds, changes or removes it, and when the provider keeps an old shape alive for a transition. A single-repo change omits the section."
+    - "The same change has a `## Deployment order` section: one ordered list of repos per phase when it ships in phases (a phase is a task group that deploys on its own). Each step names what must already be deployed; say when two repos can ship in either order."
+    - "For a transition, state the condition that ends it (a later phase, a release), not necessarily a duration."
+    - "`## Deployment order` is the order across repos. Steps and rollback inside one repo stay in the design's Migration Plan; do not repeat one in the other."
+  specs:
+    - Delta spec paths start with the OpenSpec product slug, specs/<slug>/<capability>/spec.md.
+  tasks:
+    - Group tasks by a common objective. Each numbered group heading becomes an Epic issue and describes its objective; each numbered checkbox becomes an individual child issue with its own acceptance criteria. Do not create a Story layer.
+    - "Review dependencies between groups and between tasks every time tasks.md is written or edited, and declare them with local numbers, following the Dependencies section of openspec-linear-sync: a nested bullet `  - Depends on: 2.1, 3` under a task (N.M is a task, N a whole group) and a `Depends on: 1, 2` paragraph after a group's objective. Declare only direct dependencies that block completion or verification; file order is not a dependency. Run `make check` after editing tasks.md: its `task-dependencies` rule verifies that every reference exists and that no graph has a cycle. After adding, removing or renumbering an item, revisit the lines that refer to it."
+    - When a change touches more than one repo and has no design.md, write the design before the tasks.
+    - "A task that changes or consumes a contract verifies its side against the design's `## Contracts` section (the schema, an API description diff, a generated or typed client) rather than with an end-to-end run through several repos."
+    - Data migrations and backfills are verified by reconciling the data; the rule above does not restrict that.
+    - After creating or updating tasks.md, run openspec-linear-sync to resolve the change's Linear project, ensure its Product project label, mirror Epics, individual task issues and their dependencies as blocked-by relations, and record their ids. Preserve existing ids when editing tasks.
+
+operations:
+  apply:
+    guidance:
+      - Announce the OpenSpec product from x-product in .openspec.yaml before implementation; resolve missing or conflicting product metadata first.
+      - "Before starting a task, read its `Depends on:` line and its group's. Pick tasks whose dependencies are all checked off. When the user asks for a task with an unchecked dependency, say which one is pending and let them decide whether to do that first or proceed anyway."
+      - Mark an active unchecked task with an HTML comment <!-- in-progress --> on its checkbox line; remove that marker when checking it off. When adding the marker to a task that has a Linear issue id, move that issue and its parent Epic to In Progress if they have not started yet, following the State section of openspec-linear-sync. That is the only Linear status the agent writes. Checking a task off leaves Linear unchanged, and the developer moves the cards from there.
+  archive:
+    guidance:
+      - Announce the OpenSpec product from x-product in .openspec.yaml before archiving; resolve missing or conflicting product metadata first.
+      - Before archiving, run openspec-linear-sync and report any Epic or individual task issue of the change that is not Done in Linear, leaving its status unchanged; the user decides whether to move it in Linear first or archive anyway. Keep the Linear project binding when archiving; project status is managed separately.

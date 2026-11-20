@@ -1,0 +1,21 @@
+# Org repos cloned by scripts/init.sh (never versioned here)
+/repos/
+
+# Local env files linked into repos/<name>/ by scripts/init.sh (see env/README.md)
+/env/*/*
+!/env/*/.gitkeep
+
+.DS_Store
+.env
+.env.*
+
+# Repo skills linked into meta by scripts/link-skills.sh
+/.claude/skills/*--*
+/.agents/skills/*--*
+
+# Per-developer Claude Code overrides (permissions, disabled MCP servers)
+/.claude/settings.local.json
+*.local.md
+
+# Python bytecode
+__pycache__/

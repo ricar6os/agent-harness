@@ -1,0 +1,6 @@
+interface:
+  display_name: "Sync repos"
+  short_description: "Clone or update the organization repos from repos.json and report status"
+  default_prompt: "Sync the organization repos with scripts/init.sh and summarize their status"
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,4 @@
+{
+  "profile": "custom",
+  "workflows": ["propose", "explore", "apply", "update", "sync", "archive"]
+}
