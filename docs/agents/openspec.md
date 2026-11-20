@@ -1,19 +1,37 @@
 # OpenSpec: where each rule is written
 
-Read this before you propose, update, sync or apply an OpenSpec change. Each rule is written in
-full in one place; follow the pointer instead of copying it.
+Read this before you propose, apply or archive an OpenSpec change. Each rule is written in full
+in one place; follow the pointer instead of copying it.
 
-## Products and Linear projects
+## The workflow
+
+`/openspec-explore` (optional) → `/openspec-propose` → `/openspec-apply-change`, once per phase →
+`/openspec-archive-change`. The schema `spec-plan` (`openspec/schemas/spec-plan/`) defines the
+two artifacts of a change, lean delta specs and one `plan.md` of vertical slice phases, and the
+apply behaviour: one phase per run, verified, one commit per repo, then stop.
 
 | Rule | Written in full in |
 | ---- | ------------------ |
-| Product and Linear project of a change, spec paths, task groups, `Depends on:` lines, `## Contracts` and `## Deployment order` of a multi-repo change | `openspec/config.yaml` (`context:` and `rules:`), which the OpenSpec CLI injects into every operation; the one Linear status the agent writes is in `operations.apply.guidance` of the same file |
-| Linear conventions: tool, issue ids, reading before writing, what never changes | [issue-tracker.md](issue-tracker.md) |
-| Sync procedure, labels, mapping, state, legacy migration | skill `openspec-linear-sync` |
-| PR title and one PR per repo | [working-on-a-repo.md](working-on-a-repo.md) |
+| What specs and `plan.md` contain, phases, `**Repos:**` lines, contracts, tests, apply | `openspec/schemas/spec-plan/schema.yaml` and its templates |
+| How a repo named in a plan is found, products, Linear hooks | `openspec/config.yaml`, which the CLI injects into every operation |
+| Linear conventions | [issue-tracker.md](issue-tracker.md) |
+| Sync procedure and the one status the agent writes | skill `openspec-linear-sync` |
+| Branches, PR titles, one PR per repo and phase | [working-on-a-repo.md](working-on-a-repo.md) |
 
-The keys of a change's `.openspec.yaml` are `x-product`, `x-linear-project` and
-`x-linear-sync-version` (OpenSpec 2 keeps only `x-` keys without a warning).
+## Products and Linear projects
+
+Products are optional: a change records `x-product` only when `repos.json` declares `products`,
+and its spec paths then start with that slug. The `change-product` rule of `make check`
+enforces both cases. Each change has its own Linear project, recorded as `x-linear-project`.
+The keys of `.openspec.yaml` carry the `x-` prefix because OpenSpec 2 keeps only those without
+a warning.
+
+## Repos in a plan
+
+The schema never says where a repo lives: it names repos and defers to the workspace. This
+workspace resolves a name through `repos.json` (`repos/<name>`, verified with
+`make repo-check REPO=<name>`). A single-repo workspace or an OpenSpec store resolves it its own
+way in `openspec/config.yaml`, and the schema stays the same.
 
 ## Behaviour without a main spec
 

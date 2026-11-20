@@ -9,16 +9,16 @@ organization's repositories so AI agents get organization-wide context, cross-re
 1. `gh repo create <org>/<name> --template <owner>/agent-harness --private --clone`
 2. Edit `repos.json`: set `org`, list the repos and their `products`.
 3. `make doctor && make sync && make check`
-4. Fill `GLOSSARY-MAP.md`. (The Linear team is resolved with the user at the first sync.)
+4. Without Linear, delete the `[linear]` lines of `openspec/config.yaml`, the `openspec-linear-sync` skill and `docs/agents/issue-tracker.md`. With it, the team is resolved with the user at the first sync.
 
 ## Harness files and your files
 
 | Harness-owned (kept identical across every meta) | Instance-owned |
 | ------------------------------------------------ | -------------- |
 | `scripts/`, `Makefile`, `tests/` | `repos.json` |
-| `.agents/skills/` (custom, vendored and generated) | `GLOSSARY-MAP.md` |
-| `.claude/`, `.opencode/`, `.github/workflows/` | `docs/contexts/` |
-| `docs/agents/`, `openspec/config.yaml`, `openspec/cli-profile.json` | `docs/conventions/` (workspace conventions no rule can check), `openspec/changes/`, `openspec/specs/` |
+| `.agents/skills/` (custom, vendored and generated) | `docs/conventions/` (workspace conventions no rule can check) |
+| `.claude/`, `.opencode/`, `.github/workflows/` | `openspec/changes/`, `openspec/specs/` |
+| `docs/agents/`, `openspec/schemas/`, `openspec/config.yaml`, `openspec/cli-profile.json` | |
 | MCP config files (`.mcp.json`, `.codex/config.toml`, `opencode.json`) | `env/` |
 | Guardrail wiring (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/guard.js`) | |
 
@@ -50,7 +50,7 @@ tests/                   unit tests of the checker and the guardrails (`make tes
 .github/workflows/check.yml  runs the checks and the tests on every pull request
 repos/<name>/            org repos (git-ignored; each one is its own git repository)
 env/<name>/              local .env/secret files symlinked into repos/<name>/ by init.sh (git-ignored)
-openspec/                OpenSpec: config.yaml, cli-version (pinned CLI version), cli-profile.json (pinned CLI profile), changes/ (in-flight work), specs/ (main specs)
+openspec/                OpenSpec: schemas/spec-plan/ (our workflow), config.yaml, cli-version (pinned CLI version), cli-profile.json (pinned CLI profile), changes/ (in-flight work), specs/ (main specs)
 .agents/skills/          root-level skills — canonical location (Codex/ChatGPT + Claude Code)
 .claude/skills/          Claude Code skills: symlinks to .agents/skills/ for every skill (custom, vendored and generated)
 .mcp.json                project MCP servers (Linear)
@@ -131,8 +131,7 @@ the place where the convention is written. Run `python3 scripts/check.py --list`
 | Rule | What it enforces | Convention |
 | ---- | ---------------- | ---------- |
 | `manifest` | `repos.json` has only known keys, valid `products` slugs, and unique names and paths | [Manifest](#manifest-reposjson) |
-| `change-product` | every change records a product known to `repos.json`; delta and main specs sit under that product; no Linear project is shared between changes | [`docs/agents/openspec.md`](docs/agents/openspec.md), "Products and Linear projects" |
-| `task-dependencies` | `Depends on:` references in `tasks.md` exist, and no cycle among tasks and groups (a group waits for all its tasks) can deadlock them | [`openspec-linear-sync`](.agents/skills/openspec-linear-sync/SKILL.md), "Dependencies" |
+| `change-product` | when `repos.json` declares `products`, every change records one of them and its delta and main specs sit under it; without `products`, no change records one and specs sit at `<capability>/spec.md`; no Linear project is shared between changes | [`docs/agents/openspec.md`](docs/agents/openspec.md), "Products and Linear projects" |
 | `mcp-parity` | every MCP server is declared, with the same url, in `.mcp.json`, `.codex/config.toml` and `opencode.json` | [MCP servers](#mcp-servers) |
 | `skill-exposure` | each custom skill has valid frontmatter and is visible to Claude Code; no broken links; `skills-lock.json` matches | [`docs/agents/workspace-changes.md`](docs/agents/workspace-changes.md), "Custom skills" |
 | `tracked-secrets` | git tracks no env file, nothing under `env/` except placeholders, nothing under the clones directory | `env/README.md` |
@@ -274,198 +273,90 @@ without `products` is shared by every product. This is the only place that ties 
 PRODUCT=<slug>` and the OpenSpec workflow read it from here. Add or remove entries to control
 what gets cloned. `scripts/init.sh` never resets a repo with local changes (fetch only).
 
+## Three layers
+
+The harness keeps apart what every workspace needs, where the code lives and how work is
+planned, so each part can change without the others:
+
+| Layer | What | Files |
+| ----- | ---- | ----- |
+| Core | Agent instructions as a map, guardrails, checks, MCP parity, secrets, PR and rule skills | `AGENTS.md`, `docs/agents/`, `scripts/`, `.agents/skills/` |
+| Topology | Where the code lives: one repo, this meta with `repos.json`, or an OpenSpec store (beta, not wired yet) | `repos.json`, `scripts/init.sh`, the `context:` of `openspec/config.yaml` |
+| Method | How a change is specified, planned and implemented | `openspec/schemas/spec-plan/`, the `rules:` of `openspec/config.yaml` |
+
+The method touches the topology in one place: a plan names repos, and the workspace says how a
+name becomes a checkout and a verification command. Here that is `repos.json` and
+`make repo-check REPO=<name>`, written in the `context:` of `openspec/config.yaml`. The schema
+stays the same in a single repo, in this meta, or in a store.
+
 ## Specs (OpenSpec)
 
-Domain documentation uses a [glossary map](GLOSSARY-MAP.md), organized by the products
-in `repos.json` and linked to their repository-local glossaries. Read only the contexts
-relevant to the work; [domain consumer rules](docs/agents/domain.md) describe where vocabulary,
-specifications and decisions belong.
+Changes use our own schema, `spec-plan` (`openspec/schemas/spec-plan/`), adapted from
+[CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness)'s `codely-spec-plan`. A change has
+two artifacts:
 
-Cross-repo specs are managed with OpenSpec under `openspec/`:
+- **Lean delta specs**: one behaviour per requirement, one-line scenarios.
+- **One `plan.md`**: goal, decisions and phases. Each phase is a vertical slice worth having on
+  its own, with its `**Repos:**` in deployment order, its contracts (naming the repo that provides
+  each one that crosses repos), its test strategy and its tasks.
 
-- `openspec/changes/<change>/` — proposal, design, delta specs and tasks for work in flight.
-- `openspec/specs/` — the main, always-current specs (updated when a change is synced/archived).
-- `openspec/config.yaml` — product rules, context and per-artifact rules shown to the AI.
-
-Specs are split by **OpenSpec product**, such as `shop`. Every change belongs to
-exactly one product, recorded as `x-product: <slug>` in `.openspec.yaml`. OpenSpec 2 warns about unknown
-keys, and strict validation fails on them, so the metadata keys carry the `x-` prefix. Capability paths
-start with that slug: `specs/<slug>/<capability>/spec.md` in a change and
-`openspec/specs/<slug>/<capability>/` for main specs. A change may affect multiple repositories
-of its product, including shared repos within that scope, but never multiple products.
-Split work spanning products into separate changes.
-
-Each change corresponds one-to-one to a **Linear project**, recorded separately as
-`x-linear-project: {id, url}`. That project's label under the group **Product** identifies
-the OpenSpec product. Several Linear projects can carry `Product: Shop`, each representing
-a different change; they all use the `shop` spec namespace.
-
-OpenSpec operations use the product you name or the change's recorded `x-product`; if missing,
-the agent lists workspace products and asks. Linear synchronization separately resolves your
-chosen Linear project or its recorded id, and asks when neither exists. New Linear projects
-are created only when requested, with the team resolved. Local planning can begin before a
-Linear project is selected; publishing tasks requires the binding.
-
-Typical flow from Claude Code: `/openspec-explore` → `/openspec-propose` → `/openspec-apply-change` →
-`/openspec-archive-change` (`/openspec-update-change` revises a plan, `/openspec-sync-specs` pushes
-delta specs to the main specs). The same workflow is available to Codex/ChatGPT through the
-`openspec-*` skills in `.agents/skills/`.
-
-A change that spans several repos needs a `design.md` with a `## Contracts` section (each contract
-that crosses a repo boundary, as its consumer sees it: endpoint method, path and fields, event
-payload, table columns, package signatures; also an old shape the provider keeps alive for a
-transition) and a `## Deployment order` section (one ordered list of repos per phase when the
-change ships in phases; each step names what must already be deployed; a transition states the
-condition that ends it, such as a later phase or a release). Its tasks verify their side of a
-contract against that section and are implemented one repo at a time with one PR per repo (see
-[`docs/agents/working-on-a-repo.md`](docs/agents/working-on-a-repo.md)). The exact wording is in
-`openspec/config.yaml`.
-
-### Creating specs with explore, grill-with-docs and propose
-
-Use these skills from the meta workspace, naming the OpenSpec product in your request. Start
-with the problem, the intended outcome and any constraints; the agent reads
-`GLOSSARY-MAP.md`, the relevant glossaries, existing specs and repository code for context.
-
-| Skill | When to use it | Result |
-| ----- | -------------- | ------ |
-| [`openspec-explore`](.agents/skills/openspec-explore/SKILL.md) | Understand the current behavior, investigate a problem or compare approaches. | A clearer scope, options and open questions. It does not implement code or automatically produce a complete spec. Ask explicitly to save findings as OpenSpec artifacts. |
-| [`grill-with-docs`](.agents/skills/grill-with-docs/SKILL.md) | Challenge an idea or design before committing to it. | Combines `grilling` and `domain-modeling`: questions in rounds, recommended answers, resolved glossary terms and ADRs when a decision warrants one. |
-| [`openspec-propose`](.agents/skills/openspec-propose/SKILL.md) | Turn an agreed direction into a change ready for review and implementation. | Creates the change metadata, proposal, delta specs, design when applicable and implementation tasks. It stops after planning. |
-
-A useful sequence is **explore → grill-with-docs → propose**. The first two are optional:
-start with `grill-with-docs` if you already have a concrete design, return to `explore` when
-questions need investigation, or go straight to `propose` when the scope is clear.
-
-For example, send these as separate messages in the same Claude Code conversation, answering
-the questions and confirming the agreed scope before moving on:
+There is no `proposal.md`, `design.md` or `tasks.md`. Apply implements only the first phase with
+unchecked tasks: it works on a branch in each repo of the phase, runs each repo's check, commits
+once per repo and stops. It never pushes or opens a PR; that is `create-pull-request`, after you
+review the phase. Run apply again for the next phase.
 
 ```text
-/openspec-explore For OpenSpec product shop, investigate how duplicate orders are handled today.
-Compare ways to give each order a durable identity across systems.
-
-/grill-with-docs For OpenSpec product shop, challenge the order identity approach we just explored.
-Resolve identity rules, merge edge cases, scope and acceptance criteria. Record agreed
-domain terms in the product glossary and offer ADRs for significant trade-offs.
-
-/openspec-propose Create change durable-order-identity for OpenSpec product shop using our agreed
-decisions. Include requirements and scenarios, affected repos and contracts, deployment
-order and implementation tasks. Group tasks by a common objective, with each task ready
-to become an individual issue. Before publishing to Linear, ask me to select or create
-a dedicated project for this change and resolve its team.
+/openspec-explore How are duplicate orders handled today? Compare ways to give orders a durable id.
+/openspec-propose durable-order-identity, from what we just agreed.
+/openspec-apply-change durable-order-identity        # phase 1, then review and open the PRs
+/openspec-apply-change durable-order-identity        # phase 2 ...
+/openspec-archive-change durable-order-identity
 ```
 
-In Codex/ChatGPT, request the corresponding skills by name: "Use `openspec-explore` for
-OpenSpec product shop to investigate…", "Use `grill-with-docs` to challenge this approach…", then
-"Use `openspec-propose` to create…". If `grill-with-docs` is not exposed in the client's
-skill picker, ask the agent to read `.agents/skills/grill-with-docs/SKILL.md` and use its
-`grilling` and `domain-modeling` skills together. In a new conversation, provide links to
-the saved findings and decisions so the proposal can use them.
+`openspec/specs/` holds the main specs, updated when a change is archived.
 
-The documents serve different purposes. Glossaries contain domain vocabulary; ADRs explain
-significant decisions. Follow [the domain documentation rules](docs/agents/domain.md) for
-their product or repository scope. Requirements and scenarios belong in the change's delta
-specs, under `openspec/changes/<change>/specs/<product>/<capability>/spec.md`, alongside
-`proposal.md`, `design.md` and `tasks.md`. Creating a proposal does not update the main specs.
+### Products
 
-Review the generated requirements, scenarios, design and tasks before requesting
-`/openspec-apply-change <change>`. If the plan needs revision, use
-`/openspec-update-change <change>`. Creating or updating `tasks.md` also
-triggers the Linear synchronization described below.
+Products are optional. When `repos.json` gives repos `products`, every change belongs to exactly
+one, recorded as `x-product: <slug>` in `.openspec.yaml`, and spec paths start with the slug
+(`specs/<slug>/<capability>/spec.md`, `openspec/specs/<slug>/<capability>/`). A change can touch
+that product's repos and the shared ones (without `products`), never two products. Without
+`products` in the manifest, changes carry no `x-product` and spec paths start with the
+capability. The agent never infers a product: it uses yours or the recorded one, else asks.
 
 ### Baseline specs for existing behaviour
 
 A change can only modify or remove a requirement that already exists in `openspec/specs/`.
-Behaviour built before the team adopted OpenSpec has no spec, so a change over it would add
-requirements and never record what was there before. Run
+Behaviour built before the team adopted OpenSpec has no spec, so run
 [`openspec-create-spec-from-code`](.agents/skills/openspec-create-spec-from-code/SKILL.md)
-first, naming the OpenSpec product and a capability (or a change you are about to make, or
-"which features have no spec?"). Only you start it: it writes main specs.
+first, naming the capability (and the product, when there are products). Only you start it: it
+writes main specs. It reads the code and tests of the repos, keeps only intended and verified
+behaviour, asks about ambiguous cases in one round, and leaves the specs uncommitted for review.
 
-The agent syncs the product's repos, explores the code and tests of each area, and separates
-what was intended and verified from bugs, accidents and dead code. It asks you about the
-ambiguous cases in one round. The result is `openspec/specs/<product>/<capability>/spec.md`,
-validated in strict mode, left uncommitted for your review, plus a report of the drift,
-the bugs it left out and the terms the product glossary lacks. Commit the specs in this
-workspace on a branch, then go on with `/openspec-explore` or `/openspec-propose`.
-
-### Linear integration
+### Linear (optional adapter)
 
 The [`openspec-linear-sync` skill](.agents/skills/openspec-linear-sync/SKILL.md) runs after
-`tasks.md` is created or updated, and before archive.
-It uses this hierarchy:
+`plan.md` is written or edited, and before archive:
 
 ```text
-OpenSpec product: shop
-└── Change: durable-order-identity → its own Linear project, labelled Product: Shop
-    ├── Epic issue: Give orders durable identities
-    │   ├── Task issue: Add persistent identifiers
-    │   └── Task issue: Expose identifiers in the API
-    └── Epic issue: Resolve duplicate orders
-        ├── Task issue: Detect duplicate candidates
-        └── Task issue: Merge confirmed duplicates
+Change durable-order-identity  → its own Linear project (label Product: Shop, when it has a product)
+├── Phase 1: Durable order ids → issue ABC-123
+└── Phase 2: Merge duplicates  → issue ABC-124
 ```
 
-The change maps to the Linear project itself. Each numbered `## N. <objective>` task group
-becomes an issue labelled `Epic`; every numbered checkbox becomes an individual child issue,
-explicitly assigned to the same Linear project. The Epic describes the common objective and
-completion criteria; task issues include their acceptance criteria and source links. There
-is no Story layer, and the tasks are not reduced to a checklist inside another issue.
-
-`Product` is a **project-label group**. The selected Linear project carries exactly one label
-in that group, matching the OpenSpec product; other project labels are preserved. The agent
-ensures the group and matching label during synchronization, using available MCP operations.
-A conflicting Product label is reconciled with you before reclassification.
-
-The binding uses real values returned by Linear; the following is a format example:
-
 ```yaml
-x-product: shop
 x-linear-project:
   id: <actual Linear project UUID>
   url: <actual Linear project URL>
-x-linear-sync-version: 2
+x-linear-sync-version: 3
 ```
 
-Issue ids are saved next to their group or task in `tasks.md` (illustrative ids below):
-
-```markdown
-## 1. Give orders durable identities [ABC-123]
-
-- [ ] 1.1 Add persistent identifiers; verify uniqueness [ABC-124] <!-- in-progress -->
-- [x] 1.2 Expose identifiers in the API; verify response contract [ABC-125]
-```
-
-Task ids are used in PR titles. Apply adds the `<!-- in-progress -->` marker when work
-starts and removes it when checking the task off; both are local progress in `tasks.md`.
-When apply starts a task that has an issue id, the agent moves that issue and its parent
-Epic to In Progress if they are still in Backlog or Todo. That is the only Linear status the
-agent writes, and from there you move the cards. Checking a task off leaves Linear
-unchanged, and a sync only reports differences between the file and Linear. Linear project
-status remains separately managed.
-
-Existing ids are reused, and an unchanged sync performs no writes. The old `Linear epic:`
-header and Story-based annotations require an explicit migration before reuse. Existing
-changes with only `x-product: shop` retain their product; their first sync must resolve a
-separate Linear project. The skill documents the migration and recovery rules.
-
-Linear access uses the `linear-server` MCP server (see "MCP servers" below and
-`docs/agents/issue-tracker.md`); authenticate once per client before the first sync. If a
-required project-label/group operation is unavailable, the agent reports that limitation
-and keeps the local artifacts pending synchronization.
-
-### Planning and research skills
-
-The workspace keeps a small subset of
-[mattpocock/skills](https://github.com/mattpocock/skills), pinned in `skills-lock.json`:
-
-- `grill-with-docs` combines `grilling` and `domain-modeling` to stress-test a design while
-  recording vocabulary and durable decisions.
-- `research` investigates documentation and APIs against primary sources.
-
-OpenSpec remains the shared workflow for proposals, specifications, tasks, implementation and
-Linear synchronization. Generic engineering skills belong in each developer's personal setup
-unless the team adopts them as a repository convention.
+The issue id is written at the end of the phase heading (`### Phase 1: Durable order ids [ABC-123]`)
+and goes in the PR title of every repo of that phase. When apply starts a phase, the agent moves
+its issue to In Progress if it has not started; that is the only status it writes, and you move
+the cards from there. The hooks are the lines marked `[linear]` in `openspec/config.yaml`: delete
+them, the skill and `docs/agents/issue-tracker.md` to work without Linear. Linear access uses the
+`linear-server` MCP server (see "MCP servers" below).
 
 ### Convention skills
 
@@ -496,8 +387,7 @@ not fork the script); one no rule can check goes to `docs/conventions/` of the m
     `openspec-create-spec-from-code` (adapted from CodelyTV/agent-harness, MIT) writes the baseline main specs of a
     product's existing behaviour from the code of its repos, so the first change over it can modify or remove
     requirements. Only the user starts it.
-  - _Vendored_ (`grill-with-docs`, `grilling`, `domain-modeling`, `research` from
-    [mattpocock/skills](https://github.com/mattpocock/skills); `create-rule`, `deterministify` from
+  - _Vendored_ (`create-rule`, `deterministify` from
     [CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness)): selected upstream
     skills pinned in `skills-lock.json` and exposed through directory symlinks in `.claude/skills/`.
   - _Generated_ (`openspec-*`): written by `make openspec` into `.agents/skills/`, with a

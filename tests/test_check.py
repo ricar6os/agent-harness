@@ -17,26 +17,6 @@ _spec = importlib.util.spec_from_file_location("check", str(REPO / "scripts" / "
 check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check)
 
-TASKS = """\
-## 1. Build
-
-Objective: build it.
-
-- [ ] 1.1 First
-- [ ] 1.2 Second
-  - Depends on: 1.1
-
-## 2. Release
-
-Objective: ship it.
-
-Depends on: 1
-
-- [ ] 2.1 Deploy
-  - Depends on: 1.2
-"""
-
-
 def write(root, rel, text=""):
     path = Path(root) / rel
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,9 +71,9 @@ def make_workspace(parent):
     link.parent.mkdir(parents=True)
     os.symlink("../../../.agents/skills/demo/SKILL.md", str(link))
     write(root, "openspec/changes/add-x/.openspec.yaml",
-          "schema: spec-driven\nx-product: shop\nx-linear-project:\n  id: p-1\n  url: https://linear.app/p-1\nx-linear-sync-version: 2\n")
+          "schema: spec-plan\nx-product: shop\nx-linear-project:\n  id: p-1\n  url: https://linear.app/p-1\nx-linear-sync-version: 2\n")
     write(root, "openspec/changes/add-x/specs/shop/orders/spec.md", "## ADDED Requirements\n")
-    write(root, "openspec/changes/add-x/tasks.md", TASKS)
+    write(root, "openspec/changes/add-x/plan.md", "# Plan\n")
     write(root, "openspec/specs/shop/orders/spec.md", "# orders\n")
     write(root, "env/README.md", "env\n")
     git(root, "init", "-q")
@@ -275,20 +255,43 @@ class ChangeProductTests(Base):
         self.assertViolation(self.rule("change-product"), "change-product", "missing .openspec.yaml")
 
     def test_no_product(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-driven\n")
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-plan\n")
         self.assertViolation(self.rule("change-product"), "change-product", "no top-level `x-product: <slug>`")
 
     def test_unknown_product(self):
         write(self.ws, "openspec/changes/add-x/.openspec.yaml", 'x-product: "billing"\n')
         self.assertViolation(self.rule("change-product"), "change-product", 'product "billing" is not in repos.json')
 
-    def test_membership_skipped_without_known_products(self):
-        write(self.ws, "repos.json", json.dumps({"org": "a", "repos": []}))
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "x-product: billing\n")
+    def without_products(self):
+        write(self.ws, "repos.json", json.dumps({"org": "a", "repos": [
+            {"name": "api", "url": "git@github.com:acme/api.git"}]}))
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-plan\n")
         shutil.rmtree(str(self.ws / "openspec/changes/add-x/specs/shop"))
-        write(self.ws, "openspec/changes/add-x/specs/billing/x/spec.md")
-        write(self.ws, "openspec/specs/anything/x/spec.md")
+        shutil.rmtree(str(self.ws / "openspec/specs/shop"))
+
+    def test_without_products_specs_start_with_capability(self):
+        self.without_products()
+        write(self.ws, "openspec/changes/add-x/specs/orders/spec.md")
+        write(self.ws, "openspec/specs/orders/spec.md")
         self.assertClean(self.rule("change-product"))
+
+    def test_without_products_openspec_yaml_is_optional(self):
+        self.without_products()
+        (self.ws / "openspec/changes/add-x/.openspec.yaml").unlink()
+        self.assertClean(self.rule("change-product"))
+
+    def test_without_products_x_product_is_reported(self):
+        self.without_products()
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "x-product: shop\n")
+        self.assertViolation(self.rule("change-product"), "change-product", "repos.json declares no products. Remove the key")
+
+    def test_without_products_product_level_spec_is_reported(self):
+        self.without_products()
+        write(self.ws, "openspec/changes/add-x/specs/shop/orders/spec.md")
+        write(self.ws, "openspec/specs/shop/orders/spec.md")
+        vs = self.rule("change-product")
+        self.assertViolation(vs, "change-product", "delta spec must sit at specs/<capability>/spec.md")
+        self.assertViolation(vs, "change-product", "main spec must sit at openspec/specs/<capability>/spec.md")
 
     def test_delta_spec_depth(self):
         write(self.ws, "openspec/changes/add-x/specs/orders/spec.md")
@@ -308,7 +311,7 @@ class ChangeProductTests(Base):
 
     def test_legacy_keys_each_reported_with_replacement(self):
         write(self.ws, "openspec/changes/add-x/.openspec.yaml",
-              "schema: spec-driven\nx-product: shop\nlinear_project:\n  id: p-9\nlinear_sync_version: 2\n")
+              "schema: spec-plan\nx-product: shop\nlinear_project:\n  id: p-9\nlinear_sync_version: 2\n")
         vs = self.rule("change-product")
         self.assertEqual(2, len(vs), vs)
         self.assertTrue(any("`linear_project`" in v.message and "`x-linear-project`" in v.message for v in vs))
@@ -316,7 +319,7 @@ class ChangeProductTests(Base):
         self.assertTrue(all("OpenSpec 2 rejects unknown keys" in v.message for v in vs))
 
     def test_legacy_product_reports_only_migration(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-driven\nproduct: shop\n")
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-plan\nproduct: shop\n")
         vs = self.rule("change-product")
         self.assertEqual(1, len(vs), vs)
         self.assertIn("`product` is the old key name. Rename it to `x-product`", vs[0].message)
@@ -365,160 +368,6 @@ class ChangeProductTests(Base):
     def test_yaml_parser(self):
         parsed = check.parse_simple_yaml("a: 'x'\nb: y # c\nn:\n  id: \"q\"\n  url: https://h/p\n")
         self.assertEqual({"a": "x", "b": "y", "n": {"id": "q", "url": "https://h/p"}}, parsed)
-
-
-class TaskDependencyTests(Base):
-    def run_tasks(self, text):
-        write(self.ws, "openspec/changes/add-x/tasks.md", text)
-        return self.rule("task-dependencies")
-
-    def test_green(self):
-        self.assertClean(self.rule("task-dependencies"))
-
-    def test_duplicate_group(self):
-        self.assertViolation(self.run_tasks(TASKS + "\n## 2. Again\n"), "task-dependencies", "group 2 is declared twice")
-
-    def test_duplicate_task(self):
-        self.assertViolation(self.run_tasks(TASKS + "- [ ] 2.1 Again\n"), "task-dependencies", "task 2.1 is declared twice")
-
-    def test_task_under_other_group(self):
-        self.assertViolation(self.run_tasks("## 1. A\n\n- [ ] 2.1 Lost\n\n## 2. B\n"), "task-dependencies", "task 2.1 is under group 1")
-
-    def test_task_before_any_group(self):
-        self.assertViolation(self.run_tasks("- [ ] 1.1 Lost\n"), "task-dependencies", "task 1.1 appears before any group heading")
-
-    def test_depends_without_task(self):
-        self.assertViolation(self.run_tasks("## 1. A\n\n  - Depends on: 1\n"), "task-dependencies", "has no task to attach to")
-
-    def test_malformed_ref(self):
-        vs = self.run_tasks("## 1. A\n\n- [ ] 1.1 T\n  - Depends on: x1, 1.2.3\n")
-        self.assertViolation(vs, "task-dependencies", 'malformed reference "x1"')
-        self.assertViolation(vs, "task-dependencies", 'malformed reference "1.2.3"')
-
-    def test_missing_ref_with_line_number(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1.2", "Depends on: 2.9"))
-        self.assertViolation(vs, "task-dependencies", "task 2.1 depends on 2.9, which does not exist. Fix the reference or remove it.")
-        self.assertEqual(16, [v for v in vs if "2.9" in v.message][0].line)
-
-    def test_missing_group_ref(self):
-        self.assertViolation(self.run_tasks(TASKS.replace("Depends on: 1\n", "Depends on: 7\n")), "task-dependencies",
-                             "group 2 depends on group 7, which does not exist")
-
-    def test_group_dependency_names_task(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1\n", "Depends on: 1.1\n"))
-        self.assertViolation(vs, "task-dependencies", "group dependencies name groups only")
-
-    def test_task_depends_on_itself(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1.1", "Depends on: 1.2"))
-        self.assertViolation(vs, "task-dependencies", "task 1.2 depends on itself")
-
-    def test_group_depends_on_itself(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1\n", "Depends on: 2\n"))
-        self.assertViolation(vs, "task-dependencies", "group 2 depends on itself")
-
-    def test_task_depends_on_own_group(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1.1", "Depends on: 1"))
-        self.assertViolation(vs, "task-dependencies", "task 1.2 depends on its own group 1")
-
-    def test_group_cycle(self):
-        text = "## 1. A\n\nDepends on: 2\n\n- [ ] 1.1 a\n\n## 2. B\n\nDepends on: 1\n\n- [ ] 2.1 b\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "group dependencies form a cycle: 1 → 2 → 1")
-        self.assertEqual(1, len(vs), "the group cycle must not be reported again as a task deadlock")
-
-    def test_task_cycle(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 1.2\n- [ ] 1.2 b\n  - Depends on: 1.1\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "1.1 → 1.2 → 1.1")
-        self.assertEqual(1, len(vs))
-
-    def test_cycle_through_group_expansion(self):
-        text = "## 1. A\n\nDepends on: 2\n\n- [ ] 1.1 a\n\n## 2. B\n\n- [ ] 2.1 b\n  - Depends on: 1.1\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "1.1 → 2.1 → 1.1")
-
-    def test_task_depending_on_group_expands(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 2\n\n## 2. B\n\n- [ ] 2.1 b\n  - Depends on: 1.1\n"
-        self.assertViolation(self.run_tasks(text), "task-dependencies", "1.1 → 2.1 → 1.1")
-
-    def test_cycle_not_reported_for_missing_ref(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 1.9\n"
-        vs = self.run_tasks(text)
-        self.assertEqual(1, len(vs))
-        self.assertIn("does not exist", vs[0].message)
-
-    def test_deadlock_through_an_empty_group(self):
-        text = ("## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 3\n\n## 3. Empty\n\nDepends on: 1\n")
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "group 1 → 1.1 → group 3 → group 1")
-        self.assertEqual(1, len(vs))
-
-    def test_empty_group_without_a_loop_is_fine(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 3\n\n## 3. Empty\n\nDepends on: 2\n\n## 2. B\n\n- [ ] 2.1 b\n"
-        self.assertClean(self.run_tasks(text))
-
-    def test_group_cycle_with_tasks_is_reported_once(self):
-        text = "## 1. A\n\nDepends on: 2\n\n- [ ] 1.1 a\n\n## 2. B\n\nDepends on: 1\n\n- [ ] 2.1 b\n"
-        self.assertEqual(1, len(self.run_tasks(text)))
-
-    def test_cycle_not_reported_for_own_group_reference(self):
-        vs = self.run_tasks("## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 1\n")
-        self.assertEqual(1, len(vs))
-        self.assertIn("its own group", vs[0].message)
-
-    def test_nested_tilde_line_does_not_close_a_backtick_fence(self):
-        text = TASKS + "\n```markdown\n~~~\n```\n\n- [ ] 2.2 After\n  - Depends on: 8.8\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "task 2.2 depends on 8.8, which does not exist")
-
-    def test_fence_closes_only_with_same_char_and_enough_length(self):
-        text = TASKS + "\n~~~~\n~~~\n- [ ] 9.9 y\n  - Depends on: 8.8\n~~~~\n\n- [ ] 2.2 After\n  - Depends on: 8.7\n"
-        vs = self.run_tasks(text)
-        self.assertEqual(["8.7"], [v.message.split("depends on ")[1].split(",")[0] for v in vs])
-
-    def test_multiline_html_comment_is_ignored(self):
-        text = TASKS + "\n<!--\nExample:\n- [ ] 9.9 y\n  - Depends on: 8.8\n## 9. z\n-->\n\n- [ ] 2.2 After\n  - Depends on: 8.7\n"
-        vs = self.run_tasks(text)
-        self.assertEqual(1, len(vs))
-        self.assertIn("8.7", vs[0].message)
-
-    def test_single_line_comment_and_inline_marker(self):
-        text = (TASKS + "\n<!-- - [ ] 9.9 y -->\n  <!-- one\n  - Depends on: 8.8\n  two -->\n"
-                "- [ ] 2.2 After <!-- in-progress -->\n  - Depends on: 8.7\n")
-        vs = self.run_tasks(text)
-        self.assertEqual(1, len(vs))
-        self.assertIn("task 2.2 depends on 8.7", vs[0].message)
-
-    def test_one_line_fence_snippet_is_not_a_fence(self):
-        text = TASKS + "\nUse ```bash``` here.\n```bash``` \n## 2. dup\n"
-        self.assertViolation(self.run_tasks(text), "task-dependencies", "group 2 is declared twice")
-
-    def test_tilde_fence_may_carry_a_backtick_in_its_info(self):
-        text = TASKS + "\n~~~ a`b\n## 2. dup\n~~~\n"
-        self.assertClean(self.run_tasks(text))
-
-    def test_unterminated_fence_is_reported_at_its_opening_line(self):
-        text = TASKS + "\n```bash\n## 2. dup\n"
-        vs = self.run_tasks(text)
-        opening = len(TASKS.splitlines()) + 2
-        self.assertViolation(vs, "task-dependencies", "never closed")
-        self.assertViolation(vs, "task-dependencies", "were not checked")
-        self.assertEqual([opening], [v.line for v in vs])
-
-    def test_unterminated_comment_is_reported_at_its_opening_line(self):
-        text = TASKS + "\n<!-- note\n## 2. dup\n"
-        vs = self.run_tasks(text)
-        opening = len(TASKS.splitlines()) + 2
-        self.assertViolation(vs, "task-dependencies", "never closed")
-        self.assertViolation(vs, "task-dependencies", "were not checked")
-        self.assertEqual([opening], [v.line for v in vs])
-
-    def test_closed_comment_and_fence_are_clean(self):
-        self.assertClean(self.run_tasks(TASKS + "\n<!--\n## 2. dup\n-->\n```\n## 2. dup\n```\n"))
-
-    def test_fenced_block_is_ignored(self):
-        text = TASKS + "\n```markdown\n## 9. x\n## 1. dup\n- [ ] 9.9 y\n  - Depends on: 8.8\n```\n"
-        self.assertClean(self.run_tasks(text))
 
 
 class McpParityTests(Base):
@@ -1305,7 +1154,7 @@ class CliTests(Base):
         code, out, _ = self.run_main("--list")
         self.assertEqual(0, code)
         self.assertEqual([r.id for r in check.RULES], [l.split()[0] for l in out.splitlines()])
-        self.assertEqual(10, len(check.RULES))
+        self.assertEqual(9, len(check.RULES))
 
     def test_skip_is_reported_and_counted(self):
         with mock.patch.object(check.shutil, "which", return_value=None):

@@ -29,7 +29,7 @@ The argument is free text. Read it as one of these:
 
 ### 1. Resolve the product and check the preconditions
 
-- Resolve and announce the OpenSpec product as `docs/agents/openspec.md` ("Products and Linear projects") requires: the user's selection; if there is none, list the products from `repos.json` and `GLOSSARY-MAP.md` and ask. Never infer it from the code. A capability belongs to one product: behaviour that two products share becomes one capability in each, each described with that product's vocabulary.
+- When `repos.json` declares `products`, resolve and announce the OpenSpec product as the `context:` of `openspec/config.yaml` requires: the user's selection; if there is none, list the products from `repos.json` and ask. Never infer it from the code. A capability belongs to one product: behaviour that two products share becomes one capability in each, each described with that product's vocabulary. Without `products`, there is no product: read `<product>/` in every path and id below as empty, and `--product <slug>` as absent.
 - Run `scripts/init.sh --product <slug> --no-update`: it clones every repo of the product (those whose `products` contains the slug) and every shared repo that is missing, not only the ones the capability touches, and leaves existing clones exactly as they are. Do not use `make sync`: it moves clean clones to their default branch, which would move a user's feature branch. Evidence is read from whatever branch each clone is on; tell the user when a clone is not on its default branch.
 - Run `openspec --version`; it must match `openspec/cli-version`. If the CLI is missing or differs, stop and ask the user to install the pinned version.
 - Read the `context:` of `openspec/config.yaml`. Write the specs in English unless it or `AGENTS.md` says otherwise.
@@ -60,7 +60,7 @@ Done when every candidate has a case, and every ambiguous one has the user's ver
 
 ### 5. Write the specs
 
-Read [`references/spec-format.md`](references/spec-format.md) and write `openspec/specs/<product>/<capability>/spec.md` with the **intended and verified** behaviour only, in the terms of the product glossary reached from `GLOSSARY-MAP.md`. A term the code uses and the glossary lacks does not go into the spec as your own coinage: use the code's word, and list it in the report (a product with no glossary yet: every domain term). A baseline describes implemented behaviour, and a glossary can describe a proposed model the code does not implement yet (`docs/agents/domain.md`: distinguish proposed vocabulary from implemented behavior). Use the term the shipped product uses (its screens, API and tests); when the glossary proposes a different term for the same thing, keep the implemented term and list the pair in the closing report.
+Read [`references/spec-format.md`](references/spec-format.md) and write `openspec/specs/<product>/<capability>/spec.md` with the **intended and verified** behaviour only, in the terms of the glossaries of the product's repos (a `GLOSSARY.md` or what their instructions point to). A term the code uses and no glossary has does not go into the spec as your own coinage: use the code's word, and list it in the report (repos with no glossary: every domain term). A baseline describes implemented behaviour, and a glossary can describe a proposed model the code does not implement yet. Use the term the shipped product uses (its screens, API and tests); when a glossary proposes a different term for the same thing, keep the implemented term and list the pair in the closing report.
 
 When you extend an existing spec, add requirements and scenarios and keep every existing one exactly as it is. An existing requirement that the code contradicts is **drift**: it goes to the report, and changing it is the job of an OpenSpec change.
 
@@ -80,7 +80,7 @@ Answer in the language the user writes in. Report, in this order:
 2. The scope decisions: splits, extensions, what you left out of the scope and why.
 3. The candidates you left out of the spec, each with its case and its evidence.
 4. The drift between existing requirements and the code, and the disagreements between repos.
-5. The terms the code uses and the glossary lacks, and the pairs where the glossary proposes a different term than the implemented one (implemented term kept). Offer to resolve them with the `domain-modeling` skill.
+5. The terms the code uses and no glossary has, and the pairs where a glossary proposes a different term than the implemented one (implemented term kept).
 
 Do not paraphrase the specs: the files are the deliverable. Then close with the steps that this run's facts call for, in this order, translated to the user's language:
 

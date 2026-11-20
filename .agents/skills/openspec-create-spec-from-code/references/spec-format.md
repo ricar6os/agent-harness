@@ -51,7 +51,7 @@ Checked with CLI 2.1.1:
 
 **Observable behaviour only.** Tables, classes, folders, repos and frameworks stay out. Persistence is observable as "survives a reload", not as "stored in the `orders` table". Behaviour across repos is stated as the product observes it, not as which service calls which.
 
-**The product's words.** Use the terms of the product glossary. Do not coin a term the glossary lacks. A baseline describes implemented behaviour, so it uses the term the shipped product uses (its screens, API and tests). When the glossary proposes a different term for the same thing, keep the implemented term and list the pair in the closing report.
+**The product's words.** Use the terms of the repos' glossaries, when they have one. Do not coin a term the code does not use. A baseline describes implemented behaviour, so it uses the term the shipped product uses (its screens, API and tests). When the glossary proposes a different term for the same thing, keep the implemented term and list the pair in the closing report.
 
 ## Example
 

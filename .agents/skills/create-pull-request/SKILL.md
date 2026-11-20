@@ -20,9 +20,7 @@ A reviewer must understand, verify and undo the PR without opening the code. A c
 
 ## 2. Title
 
-Conventional Commits as in `docs/agents/working-on-a-repo.md` "Commits & PRs": `type(scope): description`. When the task has a Linear issue id (next to it in the change's `tasks.md`, like `[ABC-123]`), it is the first word of the description: `feat(login): ABC-123 add magic-link sign-in`. If the repo restricts scopes (a script, config or CI check validates titles), use one of them.
-
-One PR for several tasks: use the id of the group (the Epic) when the PR completes the whole group, otherwise the id of the first task the PR implements. List the other ids in "Why".
+Conventional Commits as in `docs/agents/working-on-a-repo.md` "Commits & PRs": `type(scope): description`. When the phase has a Linear issue id (at the end of its heading in the change's `plan.md`, like `[ABC-123]`), it is the first word of the description: `feat(login): ABC-123 add magic-link sign-in`. If the repo restricts scopes (a script, config or CI check validates titles), use one of them.
 
 ## 3. Body
 
@@ -30,10 +28,10 @@ One PR for several tasks: use the id of the group (the Epic) when the PR complet
 
 - **Why**: the problem, not the solution, in product vocabulary. Link the OpenSpec change and the Linear issue. The change link is the URL of `openspec/changes/<change>/` in the workspace repository on its default branch (`gh repo view --json url,defaultBranchRef`, run in the workspace root), or on the change's branch while it is unmerged.
 - **What changes**: 2-5 bullets: what changes for users or operators, and what a reviewer must know (decisions, trade-offs, non-obvious effects). Never the commit list.
-- **Related PRs** (only for a change that spans repos): the PRs of this PR's phase (task group), in that phase's deployment order from the `## Deployment order` section of the change's `design.md`, each with its link or "not opened yet"; mark this one. One line names the earlier phases as already shipped or still open. A repo that is only touched conditionally is listed with its condition. One sentence: what must be merged and deployed before this PR, and what waits for it. When the design has no such section or states no order, use provider before consumer and say in the PR that the order was inferred.
+- **Related PRs** (only for a change that spans repos): the PRs of this PR's phase, in the order of that phase's `**Repos:**` line in the change's `plan.md`, each with its link or "not opened yet"; mark this one. One line names the earlier phases as already shipped or still open. A repo that is only touched conditionally is listed with its condition. One sentence: what must be merged and deployed before this PR, and what waits for it. When the phase has no such line, use provider before consumer and say in the PR that the order was inferred.
 - **Evidence**: proves the change that "Why" describes, with the same input before (base branch) and after. Pick by kind of change:
   - Behaviour without a screen (API, job, script, agent tool): request and response, or command and output, in code blocks trimmed to the relevant fields.
-  - A contract another repo consumes (API schema, event payload, table): the diff of the contract as declared in the design's `## Contracts` section (the contract diff when the design has no such section).
+  - A contract another repo consumes (API schema, event payload, table): the diff of the contract as declared in the Contracts of the phase in the change's `plan.md` (the contract diff when the phase declares none).
   - A screen: screenshots at desktop 1440 px and mobile 390 px on both sides, same viewport and crop. Never commit them; attach them (section 4).
   - A change in how components call each other: optional Before/After Mermaid diagrams with the same node names.
 
@@ -65,8 +63,8 @@ For a PR of the workspace repo itself, run it from the workspace root and take `
 
 For a multi-repo change:
 
-1. Record the branch and PR in the change's `tasks.md`: in the task written for that purpose when one exists; otherwise as a nested bullet under each task the PR implements, `  - PR: <repo> <branch> <url>`. That bullet is not a `Depends on:` line.
-2. Update "Related PRs" in each sibling PR of the same phase that is already open, so the PRs of that phase show the same list. Edit only PRs of the same phase that are recorded in the change's `tasks.md`; PRs of other phases keep their own list. Always pass the PR number: `gh pr view <number> --repo <owner>/<other> --json body -q .body > <tmp>/other-body.md`, change only its "Related PRs" section, then `gh pr edit <number> --repo <owner>/<other> --body-file <tmp>/other-body.md`.
+1. Record the branch and PR in the change's `plan.md`, as a line under the phase's `**Repos:**` line: `PR: <repo> <branch> <url>`.
+2. Update "Related PRs" in each sibling PR of the same phase that is already open, so the PRs of that phase show the same list. Edit only PRs of the same phase that are recorded under that phase in the change's `plan.md`; PRs of other phases keep their own list. Always pass the PR number: `gh pr view <number> --repo <owner>/<other> --json body -q .body > <tmp>/other-body.md`, change only its "Related PRs" section, then `gh pr edit <number> --repo <owner>/<other> --body-file <tmp>/other-body.md`.
 
 ## 6. After each push to a branch with an open PR
 

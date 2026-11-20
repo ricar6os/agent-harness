@@ -1,6 +1,6 @@
 interface:
   display_name: "OpenSpec Linear sync"
-  short_description: "Sync a change to a Linear project, Epics and task issues"
-  default_prompt: "Use $openspec-linear-sync to sync the active change to its dedicated Linear project, Product label, Epics and individual task issues."
+  short_description: "Sync a change to a Linear project, one issue per phase"
+  default_prompt: "Use $openspec-linear-sync to sync the active change to its Linear project, with one issue per phase of plan.md."
 policy:
   allow_implicit_invocation: true

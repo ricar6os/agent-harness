@@ -14,34 +14,6 @@
       "sourceType": "github",
       "skillPath": ".agents/skills/deterministify/SKILL.md",
       "computedHash": "b961e79b5dfb4e855ec1a2ae43f18c9029acf33213f83fc99dc683dc19c7aa79"
-    },
-    "domain-modeling": {
-      "source": "mattpocock/skills",
-      "commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
-      "sourceType": "github",
-      "skillPath": "skills/engineering/domain-modeling/SKILL.md",
-      "computedHash": "b78689833404148c769077355e12dbe5ad996a158a1e21e58ddf169e439d9d8c"
-    },
-    "grill-with-docs": {
-      "source": "mattpocock/skills",
-      "commit": "abeeaf95660ba9e8b7c753eb38f441ca707a8823",
-      "sourceType": "github",
-      "skillPath": "skills/engineering/grill-with-docs/SKILL.md",
-      "computedHash": "02e258f41d210f9b2e7cce9faf62b3c59e8fcebe5d2736369c3cd07d471324f8"
-    },
-    "grilling": {
-      "source": "mattpocock/skills",
-      "commit": "59db609eb1e18aaf59b63284d0e52255aff0c63c",
-      "sourceType": "github",
-      "skillPath": "skills/productivity/grilling/SKILL.md",
-      "computedHash": "74de5501c2b0cec8410bf4ebc9eaddc84f6f7706e04d2c70a814872b1c44e410"
-    },
-    "research": {
-      "source": "mattpocock/skills",
-      "commit": "59db609eb1e18aaf59b63284d0e52255aff0c63c",
-      "sourceType": "github",
-      "skillPath": "skills/engineering/research/SKILL.md",
-      "computedHash": "5bd6a6b833227dd87ee023c2d4734f4c349f290140514bb80bdc041ead1e837e"
     }
   }
 }

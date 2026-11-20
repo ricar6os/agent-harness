@@ -12,7 +12,7 @@
 
 <!--
 Only for a change that spans repos; delete otherwise.
-List the PRs of this PR's phase (task group), in that phase's deployment order from the change's design.md, each with its PR link or "not opened yet" (in backticks if left as a placeholder). Mark this one.
+List the PRs of this PR's phase, in the order of that phase's `**Repos:**` line in the change's plan.md, each with its PR link or "not opened yet" (in backticks if left as a placeholder). Mark this one.
 One line names the earlier phases as already shipped or still open.
 Then one sentence: what must be merged and deployed before this PR, and what waits for it.
 -->

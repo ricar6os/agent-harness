@@ -25,9 +25,10 @@ and verify with `make check` and `make test` instead of `make repo-check`.
 5. Push, then open the PR from inside the repo:
    `git -C repos/<name> push -u origin HEAD`, then use the `create-pull-request` skill (title,
    body, `gh pr create`). Pushing to a branch that already has an open PR: use the skill again.
-6. A change spanning several repos: one PR per repo, in the deployment order of the change's design
-   (per phase when it ships in phases). Record each branch and PR in the change's `tasks.md`; the
-   skill links the sibling PRs of the same phase.
+6. A change spanning several repos: apply implements one phase of its `plan.md` per run, with one
+   commit per repo, and stops. Then open one PR per repo of that phase, in the order of the phase's
+   `**Repos:**` line; the `create-pull-request` skill records each PR under the phase and links the
+   sibling PRs.
 7. Do not merge PRs, force-push, rewrite history or delete branches unless the user asks.
 
 ## Commits & PRs

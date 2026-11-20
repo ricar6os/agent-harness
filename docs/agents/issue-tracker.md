@@ -47,23 +47,26 @@ invent issue IDs, and do not silently fall back to `gh issue`.
 - **Issue IDs** are `<TEAM>-<number>` (e.g. `ABC-123`, `ABC-4418`). Always cite the ID when
   referring to a ticket, in chat and in written artifacts.
 - **Read before writing.** Fetch the issue and its comments before proposing an edit.
-- **Never** close, reassign, or change the status of an issue unless the user asks for it (the one exception is the In Progress write in `openspec/config.yaml`).
+- **Never** close, reassign, or change the status of an issue unless the user asks for it (the one exception is the In Progress write when apply starts a phase).
 - Multi-line bodies are Markdown. Keep Linear's own conventions (checklists, `ABC-123` mentions).
 
-## Products, projects, epics and tasks
+## Changes, phases and products
 
-The rules (one product and one Linear project per change, Epics, tasks, dependencies, the one
-status the agent writes) are written in `openspec/config.yaml`; the sync procedure is the
-`openspec-linear-sync` skill. What is specific to Linear conventions:
+The rules (one Linear project per change, one issue per phase of `plan.md`, the one status the
+agent writes) are in `openspec/config.yaml`, in the lines marked `[linear]`; the sync procedure
+is the `openspec-linear-sync` skill. What is specific to Linear:
 
-- **Project label**: exactly one, under the group `Product`, matching the OpenSpec product.
-  Product labels classify projects; issue labels classify Epics.
-- **Epic**: an issue labelled `Epic`. **Task**: a child issue of its Epic, in the same project;
-  its id is used in PR titles. There is no Story layer.
+- **Project**: one per change. When the change has `x-product`, the project carries exactly one
+  project label in the group `Product`, matching the slug.
+- **Issue**: one per phase, in the change's project. Its id is used in the PR titles of that
+  phase, in every repo. There are no Epics or Stories.
+
+To work without Linear, delete the `[linear]` lines of `openspec/config.yaml`, the
+`openspec-linear-sync` skill and this file, and its row in `AGENTS.md`.
 
 ## Relation to this workspace
 
-GitHub Issues are **not** used. GitHub holds code and pull requests only. A task's Linear issue ID
+GitHub Issues are **not** used. GitHub holds code and pull requests only. A phase's Linear issue ID
 goes in the PR title, never in commits: see "Commits & PRs" in [working-on-a-repo.md](working-on-a-repo.md).
 
 Each repo under `repos/` is a separate GitHub repository but they share the same Linear

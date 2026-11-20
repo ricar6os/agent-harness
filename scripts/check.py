@@ -275,12 +275,13 @@ def relpath(root, path):
     return Path(os.path.relpath(str(path), str(root))).as_posix()
 
 
-@rule("change-product", "each change has a known product; spec paths and Linear project ids agree with it",
+@rule("change-product", "a change has a known product exactly when repos.json declares products; spec paths and Linear project ids agree",
       'docs/agents/openspec.md, section "Products and Linear projects"')
 def check_change_product(root):
     out = []
     root = Path(root)
     known = known_products(root)
+    spec_shape = "<product>/<capability>/spec.md" if known else "<capability>/spec.md"
     active, archived = list_change_dirs(root)
     projects = collections.OrderedDict()
 
@@ -303,13 +304,18 @@ def check_change_product(root):
                                  "unknown keys in strict validation, and only `x-` keys are kept without a warning."
                                  % (old, LEGACY_KEYS[old])))
         if text is None:
-            out.append(Violation("change-product", relpath(root, change), None,
-                                 "missing .openspec.yaml. Create it with a top-level `x-product: <slug>`."))
+            if known:
+                out.append(Violation("change-product", relpath(root, change), None,
+                                     "missing .openspec.yaml. Create it with a top-level `x-product: <slug>`."))
         elif product is None:
-            if "product" not in legacy:
+            if known and "product" not in legacy:
                 out.append(Violation("change-product", yaml_rel, None,
                                      "no top-level `x-product: <slug>`. Record the one product this change belongs to."))
-        elif known and product not in known:
+        elif not known:
+            out.append(Violation("change-product", yaml_rel, None,
+                                 '`x-product: %s` but repos.json declares no products. Remove the key, or add '
+                                 '"products" to the repos in repos.json.' % product))
+        elif product not in known:
             out.append(Violation("change-product", yaml_rel, None,
                                  'product "%s" is not in repos.json. Known products: %s. Fix the slug or add the product to a repo.'
                                  % (product, ", ".join(sorted(known)))))
@@ -318,11 +324,11 @@ def check_change_product(root):
         if specs.is_dir():
             for spec in sorted(specs.rglob("spec.md")):
                 parts = spec.relative_to(specs).parts
-                if len(parts) != 3:
+                if len(parts) != (3 if known else 2):
                     out.append(Violation("change-product", relpath(root, spec), None,
-                                         "delta spec must sit at specs/<product>/<capability>/spec.md."
-                                         + (' Move it under specs/%s/.' % product if product else "")))
-                elif product and parts[0] != product:
+                                         "delta spec must sit at specs/%s." % spec_shape
+                                         + (' Move it under specs/%s/.' % product if known and product else "")))
+                elif known and product and parts[0] != product:
                     out.append(Violation("change-product", relpath(root, spec), None,
                                          'delta spec is under product "%s" but the change is product "%s". '
                                          'Move it to specs/%s/%s/spec.md, or split the work into a separate change.'
@@ -337,9 +343,9 @@ def check_change_product(root):
     if main_specs.is_dir():
         for spec in sorted(main_specs.rglob("spec.md")):
             parts = spec.relative_to(main_specs).parts
-            if len(parts) != 3:
+            if len(parts) != (3 if known else 2):
                 out.append(Violation("change-product", relpath(root, spec), None,
-                                     "main spec must sit at openspec/specs/<product>/<capability>/spec.md."))
+                                     "main spec must sit at openspec/specs/%s." % spec_shape))
             elif known and parts[0] not in known:
                 out.append(Violation("change-product", relpath(root, spec), None,
                                      'main spec directory "%s" is not a product in repos.json. Known products: %s.'
@@ -355,233 +361,7 @@ def check_change_product(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 3. task-dependencies
-# ---------------------------------------------------------------------------------------------
-
-GROUP_RE = re.compile(r"^## (\d+)\. ")
-TASK_RE = re.compile(r"^- \[[ xX]\] (\d+)\.(\d+) ")
-TASK_DEP_RE = re.compile(r"^[ \t]+- Depends on:(.*)$")
-GROUP_DEP_RE = re.compile(r"^Depends on:(.*)$")
-
-
-def label(node):
-    return ".".join(str(n) for n in node)
-
-
-def find_cycles(adj):
-    """Distinct simple cycles found by depth-first search, each rotated to start at its
-    smallest node. Returns a list of node lists (without repeating the first node)."""
-    color = {}
-    stack = []
-    seen = set()
-    cycles = []
-
-    def visit(node):
-        color[node] = 1
-        stack.append(node)
-        for nxt in sorted(adj.get(node, ())):
-            if color.get(nxt) == 1:
-                cyc = stack[stack.index(nxt):]
-                k = cyc.index(min(cyc))
-                cyc = cyc[k:] + cyc[:k]
-                if tuple(cyc) not in seen:
-                    seen.add(tuple(cyc))
-                    cycles.append(cyc)
-            elif nxt not in color:
-                visit(nxt)
-        stack.pop()
-        color[node] = 2
-
-    old = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(old, 10000))
-    try:
-        for node in sorted(adj):
-            if node not in color:
-                visit(node)
-    finally:
-        sys.setrecursionlimit(old)
-    return cycles
-
-
-def check_tasks_text(rel, text):
-    out = []
-
-    def bad(line, msg):
-        out.append(Violation("task-dependencies", rel, line, msg))
-
-    groups = {}
-    tasks = {}
-    task_deps = []   # (task, line, raw refs)
-    group_deps = []  # (group, line, raw refs)
-    cur_group = None
-    last_task = None
-    fence = None          # (character, length, line) of the code fence that is open
-    comment_line = None   # line where the open multi-line HTML comment starts
-    for i, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        if fence:
-            if stripped and set(stripped) == {fence[0]} and len(stripped) >= fence[1]:
-                fence = None
-            continue
-        if comment_line:
-            if "-->" in line:
-                comment_line = None
-            continue
-        if stripped.startswith(("```", "~~~")):
-            run = len(stripped) - len(stripped.lstrip(stripped[0]))
-            # a backtick fence cannot carry a backtick in its info string: "```bash```" is inline code
-            if not (stripped[0] == "`" and "`" in stripped[run:]):
-                fence = (stripped[0], run, i)
-                continue
-        if stripped.startswith("<!--"):
-            if stripped.find("-->", 4) < 0:
-                comment_line = i
-            continue
-        m = GROUP_RE.match(line)
-        if m:
-            n = int(m.group(1))
-            if n in groups:
-                bad(i, "group %d is declared twice (first at line %d). Renumber one of them." % (n, groups[n]))
-            else:
-                groups[n] = i
-            cur_group, last_task = n, None
-            continue
-        m = TASK_RE.match(line)
-        if m:
-            key = (int(m.group(1)), int(m.group(2)))
-            if cur_group is None:
-                bad(i, "task %s appears before any group heading. Put it under a `## %d. <objective>` heading."
-                    % (label(key), key[0]))
-            elif key[0] != cur_group:
-                bad(i, "task %s is under group %d. Renumber it %d.<n>, or move it under group %d."
-                    % (label(key), cur_group, cur_group, key[0]))
-            if key in tasks:
-                bad(i, "task %s is declared twice (first at line %d). Renumber one of them." % (label(key), tasks[key]))
-            else:
-                tasks[key] = i
-            last_task = key
-            continue
-        m = TASK_DEP_RE.match(line)
-        if m:
-            if last_task is None:
-                bad(i, "`Depends on:` has no task to attach to. Put it directly under a task checkbox line.")
-            else:
-                task_deps.append((last_task, i, m.group(1)))
-            continue
-        m = GROUP_DEP_RE.match(line)
-        if m:
-            if cur_group is None:
-                bad(i, "`Depends on:` is before any group heading. Put it after the objective of the group that waits.")
-            else:
-                group_deps.append((cur_group, i, m.group(1)))
-
-    if fence:
-        bad(fence[2], "this code fence is never closed, so the lines after it were not checked. Close it with %s."
-            % (fence[0] * fence[1]))
-    if comment_line:
-        bad(comment_line, "this HTML comment is never closed, so the lines after it were not checked. Close it with `-->`.")
-
-    def parse_refs(line, raw):
-        refs = []
-        for part in [p.strip() for p in raw.split(",")]:
-            if re.fullmatch(r"\d+", part):
-                refs.append((int(part),))
-            elif re.fullmatch(r"\d+\.\d+", part):
-                a, b = part.split(".")
-                refs.append((int(a), int(b)))
-            else:
-                bad(line, 'malformed reference "%s". Use a group number (N) or a task number (N.M), comma-separated.' % part)
-        return refs
-
-    def ref_text(ref):
-        return "group %d" % ref[0] if len(ref) == 1 else label(ref)
-
-    group_adj = collections.defaultdict(set)   # group -> groups it waits for
-    explicit_of = collections.defaultdict(list)  # task -> valid refs from its own lines
-    for task, line, raw in task_deps:
-        for ref in parse_refs(line, raw):
-            owner = "task " + label(task)
-            if len(ref) == 1:
-                if ref[0] not in groups:
-                    bad(line, "%s depends on %s, which does not exist. Fix the reference or remove it." % (owner, ref_text(ref)))
-                elif ref[0] == task[0]:
-                    bad(line, "%s depends on its own group %d. Remove the line; a task already belongs to its group." % (owner, ref[0]))
-                else:
-                    explicit_of[task].append(ref)
-            elif ref not in tasks:
-                bad(line, "%s depends on %s, which does not exist. Fix the reference or remove it." % (owner, label(ref)))
-            elif ref == task:
-                bad(line, "%s depends on itself. Remove the reference." % owner)
-            else:
-                explicit_of[task].append(ref)
-    for group, line, raw in group_deps:
-        for ref in parse_refs(line, raw):
-            owner = "group %d" % group
-            if len(ref) == 2:
-                bad(line, "%s depends on task %s; group dependencies name groups only. Use a group number here, "
-                          "or declare the dependency on the task that waits." % (owner, label(ref)))
-            elif ref[0] not in groups:
-                bad(line, "%s depends on group %d, which does not exist. Fix the reference or remove it." % (owner, ref[0]))
-            elif ref[0] == group:
-                bad(line, "%s depends on itself. Remove the reference." % owner)
-            else:
-                group_adj[(group,)].add((ref[0],))
-
-    for cyc in find_cycles(group_adj):
-        path = " → ".join(label(n) for n in cyc + [cyc[0]])
-        bad(groups[cyc[0][0]], "group dependencies form a cycle: %s. Remove one `Depends on:` line to break it." % path)
-
-    # Deadlock graph. Nodes: tasks (g, n) and groups (g,). A task waits for the tasks and groups it names and
-    # for the groups its own group depends on; a group waits for each of its tasks and for the groups it names.
-    # Every edge remembers where it comes from: "named" (a task's own line) or "implied" (group structure).
-    graph = collections.defaultdict(lambda: collections.defaultdict(set))
-    for task in tasks:
-        for ref in explicit_of.get(task, ()):
-            graph[task][ref].add("named")
-        for target in group_adj.get((task[0],), ()):
-            graph[task][target].add("implied")
-        graph[(task[0],)][task].add("implied")
-    for group, targets in group_adj.items():
-        for target in targets:
-            graph[group][target].add("implied")
-    plain = {n: set(e) for n, e in graph.items()}
-
-    def shown(cyc):
-        """Groups between two tasks only expand `task → group → task`: leave them out of the printed path."""
-        kept = []
-        for k, node in enumerate(cyc):
-            if len(node) == 1 and len(cyc[k - 1]) == 2 and len(cyc[(k + 1) % len(cyc)]) == 2:
-                continue
-            kept.append(node)
-        return " → ".join(ref_text(n) if len(n) == 1 else label(n) for n in kept + kept[:1])
-
-    for cyc in find_cycles(plain):
-        hops = list(zip(cyc, cyc[1:] + cyc[:1]))
-        if all(graph[a][b] == {"implied"} for a, b in hops):
-            continue  # follows from group dependencies alone: already reported as a group cycle
-        first = cyc[0]
-        bad(tasks[first] if len(first) == 2 else groups[first[0]],
-            "task dependencies form a deadlock: %s. A task waits for the tasks and groups it names and for the groups its "
-            "own group depends on; a group waits for all its tasks and the groups it depends on. Remove one reference."
-            % shown(cyc))
-    out.sort(key=lambda v: v.line or 0)
-    return out
-
-
-@rule("task-dependencies", "tasks.md Depends on: references exist and the dependency graphs have no cycle",
-      '.agents/skills/openspec-linear-sync/SKILL.md, section "Dependencies"')
-def check_task_dependencies(root):
-    out = []
-    active, _ = list_change_dirs(root)
-    for change in active:
-        text = read_text(change / "tasks.md")
-        if text is not None:
-            out.extend(check_tasks_text(relpath(root, change / "tasks.md"), text))
-    return out
-
-
-# ---------------------------------------------------------------------------------------------
-# 4. mcp-parity
+# 3. mcp-parity
 # ---------------------------------------------------------------------------------------------
 
 MCP_FILES = (".mcp.json", ".codex/config.toml", "opencode.json")
@@ -823,7 +603,7 @@ def check_mcp_parity(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 5. skill-exposure
+# 4. skill-exposure
 # ---------------------------------------------------------------------------------------------
 
 def frontmatter(text):
@@ -927,7 +707,7 @@ def check_skill_exposure(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 6. tracked-secrets
+# 5. tracked-secrets
 # ---------------------------------------------------------------------------------------------
 
 def git_tracked(root):
@@ -978,7 +758,7 @@ def check_tracked_secrets(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 7. generated-skills
+# 6. generated-skills
 # ---------------------------------------------------------------------------------------------
 
 PIN_RE = re.compile(r"^\d+\.\d+\.\d+$")
@@ -1165,7 +945,7 @@ def check_generated_skills(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 8. openspec-validate
+# 7. openspec-validate
 # ---------------------------------------------------------------------------------------------
 
 def require_pinned_cli(rule_id, root, require_tools):
@@ -1212,7 +992,7 @@ def check_openspec_validate(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 9. guardrails
+# 8. guardrails
 # ---------------------------------------------------------------------------------------------
 
 GUARD_SCRIPT = "scripts/guard.py"
@@ -1327,7 +1107,7 @@ def check_guardrails(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 10. agents-map
+# 9. agents-map
 # ---------------------------------------------------------------------------------------------
 
 AGENTS_MAP_LIMIT = 6000
