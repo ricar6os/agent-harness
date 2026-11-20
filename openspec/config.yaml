@@ -16,3 +16,17 @@ context: |
   touches only that product's repos plus shared ones (entries without `products`). Split work
   spanning products into separate changes. Without `products` in repos.json, changes carry no
   x-product and spec paths start with the capability.
+
+# Tracker hooks. They apply only when x-tracker is not none, and they are the same for every
+# tracker, so switching tracker is that one line.
+rules:
+  plan:
+    - "Unless `x-tracker` at the top of openspec/config.yaml is none, run the openspec-tracker-sync skill after writing or editing plan.md. It keeps one issue per phase and writes its reference at the end of the phase heading."
+
+operations:
+  apply:
+    guidance:
+      - "Unless `x-tracker` in openspec/config.yaml is none: when starting a phase whose heading ends in an issue reference, mark that issue started as the State section of the openspec-tracker-sync skill says. That is the only tracker write apply makes."
+  archive:
+    guidance:
+      - "Unless `x-tracker` in openspec/config.yaml is none: before archiving, run the openspec-tracker-sync skill and report every phase whose issue is not finished, leaving it unchanged; the user decides whether to archive anyway."

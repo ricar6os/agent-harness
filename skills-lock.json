@@ -14,6 +14,13 @@
       "sourceType": "github",
       "skillPath": ".agents/skills/deterministify/SKILL.md",
       "computedHash": "b961e79b5dfb4e855ec1a2ae43f18c9029acf33213f83fc99dc683dc19c7aa79"
+    },
+    "openspec-create-spec-from-code": {
+      "source": "CodelyTV/agent-harness",
+      "commit": "ddf2be2219c8e029ead8bd0947aa3e087a25d7e8",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/openspec-create-spec-from-code/SKILL.md",
+      "computedHash": "bfff1388a2b95a34ffa360d30c4969a636b169546ccf72e78ff608a5d650017e"
     }
   }
 }

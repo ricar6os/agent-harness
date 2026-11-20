@@ -1,8 +1,9 @@
 # GitHub
 
 Tools: the `gh` CLI, authenticated (`gh auth status`). Issues live in the repository that holds
-`openspec/` (the workspace repo); get its name with `gh repo view --json nameWithOwner -q .nameWithOwner`
-from the workspace root. `<repo>` below stands for that `owner/name`.
+`openspec/`, even when a phase touches other repos; get its name with
+`gh repo view --json nameWithOwner -q .nameWithOwner` from the folder that holds `openspec/`.
+`<repo>` below stands for that `owner/name`.
 
 ## Mapping
 

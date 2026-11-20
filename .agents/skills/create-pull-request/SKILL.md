@@ -1,6 +1,6 @@
 ---
 name: create-pull-request
-description: Write the title and body of a pull request, with before/after evidence, deploy steps and rollback, and link the PRs of a change that spans repos. Use before creating or editing a pull request in any repository of the workspace or in the workspace repo itself, and after pushing commits to a branch that has an open pull request.
+description: Write the title and body of a pull request, with before/after evidence, deploy steps and rollback, and link the PRs of a change that spans repos. Use before creating or editing a pull request, and after pushing commits to a branch that has an open pull request.
 metadata:
   adapted_from: CodelyTV/agent-harness, skill create-pull-request (https://github.com/CodelyTV/agent-harness)
   author: Codely <support@codely.com> (https://codely.com)
@@ -13,20 +13,26 @@ A reviewer must understand, verify and undo the PR without opening the code. A c
 
 ## 1. Which rules apply
 
-1. The repo's own rules come first (`AGENTS.md` "Instruction precedence"): `repos/<name>/.github/pull_request_template.md` and the PR rules in `repos/<name>/AGENTS.md`. They decide the length and which sections exist.
+1. The rules of the repo the PR is opened in come first: its `.github/pull_request_template.md` and the PR rules in its `AGENTS.md`. They decide the length and which sections exist.
 2. Use [`references/pull-request-template.md`](references/pull-request-template.md) only when the repo has no template. Fill what the repo's rules leave open.
 3. When the repo asks for short descriptions, or only non-obvious things, keep only the sections that carry something non-obvious, each in its shortest form. Two sections are non-obvious by nature and stay: **Related PRs** for a change that spans repos, and **Deploy steps** / **Rollback** when shipping touches state outside the code (migrations, config, data, a manual step).
 4. Add those sections to the repo's own template when they apply, unless the repo's instructions forbid extra sections.
 
 ## 2. Title
 
-Conventional Commits as in `docs/agents/working-on-a-repo.md` "Commits & PRs": `type(scope): description`. The phase's issue reference sits at the end of its heading in the change's `plan.md`. With `x-tracker: linear` (in `openspec/config.yaml`), its id is the first word of the description: `feat(login): ABC-123 add magic-link sign-in`. With `github` or `none`, the title carries no reference. If the repo restricts scopes (a script, config or CI check validates titles), use one of them.
+Conventional Commits, `type(scope): description`, unless the repo's rules set another format. If the repo restricts scopes (a script, config or CI check validates titles), use one of them.
+
+When the PR implements a phase of a plan, the phase's issue reference sits at the end of its heading in `plan.md`, and its form decides where it goes:
+
+- A tracker id such as `[ABC-123]` is the first word of the description: `feat(login): ABC-123 add magic-link sign-in`.
+- A GitHub issue such as `[#13]` stays out of the title and goes in the body ("Why").
+- No reference: a plain title.
 
 ## 3. Body
 
 `gh pr create --body` ignores templates. Shell variables do not survive between tool calls, so run `mktemp -d` once, note the absolute path it prints, and write that literal path in every later command; `<tmp>` below stands for it. Copy the template to `<tmp>/pr-body.md`, fill it, delete the sections that do not apply and every HTML comment, and pass it with `--body-file`. Remove the directory when done (`rm -r <tmp>`).
 
-- **Why**: the problem, not the solution, in product vocabulary. When the PR implements a phase of an OpenSpec change, link the change and, when there is one, the phase's issue: the Linear issue, or `Part of <owner>/<repo>#13` for GitHub (never `Closes`). The change link is the URL of `openspec/changes/<change>/` in the workspace repository on its default branch (`gh repo view --json url,defaultBranchRef`, run in the workspace root), or on the change's branch while it is unmerged.
+- **Why**: the problem, not the solution, in product vocabulary. When the PR implements a phase of a plan, link the change and, when there is one, the phase's issue: the tracker's issue, or `Part of <owner>/<repo>#13` for a GitHub issue. Write `Part of`, not `Closes`: a phase can have PRs in several repos. The change link is the URL of the change's folder (`openspec/changes/<change>/`) in the repo that holds it, on its default branch (`gh repo view --json url,defaultBranchRef`, run in that repo), or on the change's branch while it is unmerged.
 - **What changes**: 2-5 bullets: what changes for users or operators, and what a reviewer must know (decisions, trade-offs, non-obvious effects). Never the commit list.
 - **Related PRs** (only for a change that spans repos): the PRs of this PR's phase, in the order of that phase's `**Repos:**` line in the change's `plan.md`, each with its link or "not opened yet"; mark this one. One line names the earlier phases as already shipped or still open. A repo that is only touched conditionally is listed with its condition. One sentence: what must be merged and deployed before this PR, and what waits for it. When the phase has no such line, use provider before consumer and say in the PR that the order was inferred.
 - **Evidence**: proves the change that "Why" describes, with the same input before (base branch) and after. Pick by kind of change:
@@ -36,13 +42,13 @@ Conventional Commits as in `docs/agents/working-on-a-repo.md` "Commits & PRs": `
   - A change in how components call each other: optional Before/After Mermaid diagrams with the same node names.
 
   For a fix, the "before" showing the failure matters most. Delete the section only when nothing outside the tests can observe the change (config, CI, docs, an internal refactor). Evidence never contains tokens, credentials, connection strings or personal data from dev copies of production data: trim or redact, and say what was redacted.
-- **How I verified**: the commands actually run and their real result, including `make repo-check REPO=<name>` (for the workspace repository itself: `make check` and `make test`); and what was not checked. Never list a check that was not done.
+- **How I verified**: the commands actually run and their real result, including the repo's verification command (the one its `AGENTS.md` or the workspace's instructions name); and what was not checked. Never list a check that was not done.
 - **Deploy steps** (only when someone must act by hand): numbered checkboxes, each with when to run it (before merging / after deploying), where, and the exact command, query or flag. Never tick a box you did not run.
 - **Rollback**: "Revert this pull request." when that is enough. Otherwise ordered steps with the exact migration name, command or flag, what data is lost or kept, and what cannot be undone. Read the migrations in the diff; never guess. For a multi-repo change, say where this PR sits in the reverse order: consumers are rolled back before the provider they depend on.
 
 ## 4. Create it
 
-From inside `repos/<name>`. Take `<owner>/<name>` from the repo's `url` in `repos.json` (the GitHub name need not equal the manifest `name`):
+Run it from inside the repo the branch belongs to. Take `<owner>/<name>` from `git remote get-url origin` there:
 
 ```bash
 gh pr create --repo <owner>/<name> \
@@ -52,12 +58,10 @@ gh pr create --repo <owner>/<name> \
   --attach "<tmp>/evidence/before-desktop.png"
 ```
 
-For a PR of the workspace repo itself, run it from the workspace root and take `<owner>/<name>` from `git remote get-url origin`; verify with `make check` and `make test`.
-
 - Add `--assignee @me` only when `gh` runs with the credentials of the person directing the work; otherwise leave the assignee empty and say so.
 - One `--attach` per image, same absolute path as in the body's Markdown image reference. Check first that `gh pr create --help` lists `--attach`.
 - After creating or editing, read the body back (`gh pr view <number> --repo <owner>/<name> --json body -q .body`) and make sure no local filesystem path remains. When `--attach` is unavailable or an upload fails, remove the image reference from the body and tell the user the file paths instead.
-- Stop after opening the PR. Merging is the user's decision (the guard asks before `gh pr merge`).
+- Stop after opening the PR. Merging is the user's decision.
 
 ## 5. After creating it
 

@@ -1,7 +1,8 @@
 # Linear
 
-Tools: the `linear-server` MCP server. Discover its tool names from the connected server.
-Conventions: [docs/agents/issue-tracker.md](../../../../docs/agents/issue-tracker.md).
+Tools: the Linear MCP server (`https://mcp.linear.app/mcp`). Discover its tool names from the connected server instead of assuming them. When the session exposes no Linear tools, stop and say so.
+
+Fetch an issue and its comments before editing it, and cite issues by their id (`ABC-123`).
 
 ## Mapping
 

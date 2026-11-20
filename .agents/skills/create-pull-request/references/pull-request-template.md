@@ -41,7 +41,7 @@ Delete the section only when nothing outside the tests can observe the change (c
 
 ## How I verified
 
-<!-- Commands actually run and their real result, including `make repo-check REPO=<name>` (the workspace repository: `make check` and `make test`); and what was not checked. Never list a check that was not done. -->
+<!-- Commands actually run and their real result, including the repo's verification command; and what was not checked. Never list a check that was not done. -->
 
 - `<item>`
 

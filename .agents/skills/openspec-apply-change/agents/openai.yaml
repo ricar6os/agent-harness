@@ -1,6 +1,0 @@
-interface:
-  display_name: "OpenSpec apply"
-  short_description: "Implement the next phase of a change, verify, commit and stop"
-  default_prompt: "Use $openspec-apply-change to implement the next phase of the change."
-policy:
-  allow_implicit_invocation: true

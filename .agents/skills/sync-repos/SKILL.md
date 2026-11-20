@@ -5,6 +5,8 @@ description: Clone or update the organization's repos from repos.json and report
 
 # Sync the repos
 
+This skill drives the scripts of a meta workspace built from agent-harness (`scripts/init.sh`, `scripts/status.sh`, `repos.json`). When the workspace has none of them, say so and stop.
+
 ## 1. Sync
 
 Run `scripts/init.sh` from the workspace root. Restrict it when the task needs only some repos:

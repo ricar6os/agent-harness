@@ -32,6 +32,14 @@ to clone it, then `make check`.
 Skills live in `.agents/skills/<name>/`: a `SKILL.md` whose frontmatter `name` equals the
 directory, and an `agents/openai.yaml` with the name and prompt Codex shows for it. A skill
 vendored from another repository is pinned in `skills-lock.json`; change it upstream, not here.
+
+Other repositories install these skills with `npx skills add`, which copies the skill's folder
+and nothing else. So a skill reaches nothing outside its folder: no link to `docs/agents/`, no
+`make` target, no script of this workspace. What depends on the workspace (how a repo is found,
+its verification command) the skill leaves to "the repo's `AGENTS.md`". The one exception is a
+skill that only makes sense here, such as `sync-repos`: it says so in its first lines and sits
+in the "Meta workspace" group of `skills.sh.json`. Add every new skill to a group of that file.
+
 After adding a skill, expose it to Claude Code:
 
 - A skill with only a `SKILL.md`:
@@ -40,23 +48,23 @@ After adding a skill, expose it to Claude Code:
   directory as the `.claude/skills/<name>` path, so relative references must exist there:
   `ln -s ../../.agents/skills/<name> .claude/skills/<name>`
 
-## The OpenSpec skills and schema
+## The OpenSpec schema
 
-The `openspec-*` skills and `openspec/schemas/spec-plan/` are this workspace's own, and
-harness-owned: change them in the harness repository. Keep both agnostic of where repos live;
-that goes in the `context:` of `openspec/config.yaml`. After editing the schema run
-`openspec schema validate spec-plan` and `make test`: `tests/test_openspec.py` writes a change
-from the templates and takes it through validation and archive.
+`openspec/schemas/spec-plan/` is harness-owned: change it in the harness repository. Keep it
+agnostic of where repos live; that goes in the `context:` of `openspec/config.yaml`. After
+editing it run `openspec schema validate spec-plan` and `make test`: `tests/test_openspec.py`
+writes a change from the templates and takes it through validation and archive.
 
-Run `openspec init` or `openspec update` nowhere here: they write the CLI's generic skills over
-ours, and the `skill-exposure` rule reports a skill the CLI wrote.
+The workflow skills (`openspec-propose`, `openspec-apply-change` and the others) are OpenSpec's
+own. `openspec init` installs them; the harness repository does not version them. To change
+what they do, change the schema or `openspec/config.yaml`, never their text.
 
 ## Upgrading OpenSpec
 
 `openspec/cli-version` holds the version CI installs. Locally, that version or a newer one of
 the same major runs the checks. To upgrade: write the new version in the file, install it, and
-run `make check` and `make test`. `tests/test_openspec.py` fails when a command the skills use
-changed; adapt the skill that uses it ([openspec.md](openspec.md) lists them).
+run `make check` and `make test`. `tests/test_openspec.py` fails when the CLI stops handing the
+schema's rules or the config's hooks to the skills.
 
 ## Local files
 

@@ -669,25 +669,11 @@ def skill_entries(base):
     return sorted(p for p in base.iterdir() if not p.name.startswith(".") and "--" not in p.name)
 
 
-def is_generated_skill(md):
-    """True when the frontmatter has `author: openspec` under `metadata:`, as the OpenSpec CLI writes it."""
-    lines = frontmatter(read_text(md)) or ()
-    in_metadata = False
-    for line in lines:
-        if re.match(r"^metadata:\s*$", line):
-            in_metadata = True
-        elif in_metadata and re.match(r"^\s+author:\s*[\"']?openspec[\"']?\s*$", line):
-            return True
-        elif in_metadata and line.strip() and not line[:1].isspace():
-            in_metadata = False
-    return False
-
-
 LN_HELP = ("Expose it with `mkdir -p .claude/skills/{n} && ln -s ../../../.agents/skills/{n}/SKILL.md .claude/skills/{n}/SKILL.md`; "
            "a skill with references/ gets a directory link instead: `ln -s ../../.agents/skills/{n} .claude/skills/{n}`.")
 
 
-@rule("skill-exposure", "skills have valid frontmatter, are exposed to Claude Code, are not written by the OpenSpec CLI, and nothing is a broken link",
+@rule("skill-exposure", "skills have valid frontmatter, are exposed to Claude Code, and nothing is a broken link",
       'docs/agents/workspace-changes.md, section "Custom skills"')
 def check_skill_exposure(root):
     out = []
@@ -710,10 +696,6 @@ def check_skill_exposure(root):
                                      % (json.dumps(name) if name is not None else "missing", skill.name, skill.name)))
             if not frontmatter_value(lines, "description"):
                 out.append(Violation("skill-exposure", rel, None, "frontmatter has no description. Add `description:` saying when to use the skill."))
-        if is_generated_skill(md):
-            out.append(Violation("skill-exposure", rel, None,
-                                 "written by the OpenSpec CLI (`openspec init` or `openspec update`). This workspace keeps its own "
-                                 "openspec-* skills: restore the file with `git checkout -- %s`, or remove the skill." % rel))
         if not (claude / skill.name / "SKILL.md").is_file():
             out.append(Violation("skill-exposure", ".claude/skills/%s/SKILL.md" % skill.name, None,
                                  "skill .agents/skills/%s is not visible to Claude Code. %s" % (skill.name, LN_HELP.format(n=skill.name))))

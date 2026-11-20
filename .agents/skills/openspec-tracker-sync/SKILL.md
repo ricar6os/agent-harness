@@ -15,8 +15,8 @@ Read `x-tracker` at the top of `openspec/config.yaml`:
 | Value | Container per change | Issue per phase | Read |
 | --- | --- | --- | --- |
 | `linear` | A Linear project | An issue in that project | [references/linear.md](references/linear.md) |
-| `github` | A parent issue in the repo that holds the change | A sub-issue of it | [references/github.md](references/github.md) |
-| `none` | nothing | nothing | stop: `plan.md` checkboxes are the only tracking |
+| `github` | A parent issue in the repo that holds `openspec/` | A sub-issue of it | [references/github.md](references/github.md) |
+| `none`, or no `x-tracker` line | nothing | nothing | stop: `plan.md` checkboxes are the only tracking |
 
 Read only the reference of the configured tracker. If its tools are not available in this
 session (MCP server not connected, `gh` not authenticated), name what is missing, stop, and leave

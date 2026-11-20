@@ -1,8 +1,8 @@
-"""Contract tests for the OpenSpec CLI: every command the openspec-* skills call, run against this
-repository's schema and config (docs/agents/openspec.md lists them).
+"""Contract tests for the OpenSpec CLI: the commands OpenSpec's workflow skills call, run against this
+repository's schema and config.
 
-They fail when a CLI upgrade changes a command or a field the skills read, or when a template
-of the schema no longer passes strict validation. Skipped when the CLI is not installed at a
+They fail when a CLI upgrade stops handing the schema's rules and the config's hooks to those
+skills, or when a template of the schema no longer passes strict validation. Skipped when the CLI is not installed at a
 version that openspec/cli-version accepts; CI installs that version, so they always run there.
 """
 import importlib.util
@@ -127,7 +127,7 @@ class OpenSpecContractTests(unittest.TestCase):
         status = self.js("status", "--change", "add-greeting")
         self.assertEqual(["done", "done"], [a["status"] for a in status["artifacts"]])
 
-    def test_artifact_instructions_carry_what_the_propose_skill_reads(self):
+    def test_artifact_instructions_carry_the_template_the_rules_and_the_context(self):
         self.new_change(plan=False)
         for artifact, template in (("specs", "spec.md"), ("plan", "plan.md")):
             data = self.js("instructions", artifact, "--change", "add-greeting")
@@ -136,6 +136,7 @@ class OpenSpecContractTests(unittest.TestCase):
             self.assertEqual((SCHEMA / "templates" / template).read_text().strip(), data["template"].strip())
             self.assertIn("repos.json", data["context"])
         self.assertEqual(["specs"], [d["id"] for d in data["dependencies"]])
+        self.assertIn("openspec-tracker-sync", " ".join(data["rules"]))
         self.assertTrue(data["resolvedOutputPath"].endswith("add-greeting/plan.md"))
 
     def test_a_spec_written_from_the_template_passes_strict_validation(self):
@@ -157,6 +158,7 @@ class OpenSpecContractTests(unittest.TestCase):
         self.assertEqual({"total": 3, "complete": 1, "remaining": 2}, data["progress"])
         self.assertEqual({"specs", "plan"}, set(data["contextFiles"]))
         self.assertIn("Implement only the first phase with unchecked tasks", data["instruction"])
+        self.assertIn("openspec-tracker-sync", " ".join(data["operationGuidance"]))
         self.assertIn("repos.json", data["context"])
 
     def test_apply_is_blocked_without_a_plan(self):

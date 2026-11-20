@@ -531,13 +531,6 @@ class SkillExposureTests(Base):
     def test_green(self):
         self.assertClean(self.rule("skill-exposure"))
 
-    def test_skill_written_by_the_openspec_cli_is_reported(self):
-        write(self.ws, ".agents/skills/demo/SKILL.md",
-              "---\nname: demo\ndescription: d\nmetadata:\n  author: openspec\n  version: \"1.0\"\n---\nBody\n")
-        self.assertViolation(self.rule("skill-exposure"), "skill-exposure", "written by the OpenSpec CLI")
-        write(self.ws, ".agents/skills/demo/SKILL.md", "---\nname: demo\ndescription: d\nmetadata:\n  author: me\n---\nBody\n")
-        self.assertClean(self.rule("skill-exposure"))
-
     def test_name_mismatch(self):
         write(self.ws, ".agents/skills/demo/SKILL.md", "---\nname: other\ndescription: d\n---\n")
         self.assertViolation(self.rule("skill-exposure"), "skill-exposure", 'frontmatter name is "other" but the directory is "demo"')

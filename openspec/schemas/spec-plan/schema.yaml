@@ -39,7 +39,8 @@ apply:
   requires: [plan]
   tracks: plan.md
   instruction: |
-    Implement only the first phase with unchecked tasks, then stop.
+    Implement only the first phase with unchecked tasks, then stop. This overrides any instruction to
+    keep going through every remaining task: the tasks of later phases wait for the next run.
 
     1. Resolve each repo of the phase (its checkout and its verification command) as the workspace instructions say. Work on a branch in each repo, never on its default branch.
     2. Implement the tasks in the phase's repo order and check off each one as you finish it.

@@ -1,6 +1,0 @@
-interface:
-  display_name: "OpenSpec explore"
-  short_description: "Investigate and settle scope before proposing a change"
-  default_prompt: "Use $openspec-explore to investigate this before proposing a change."
-policy:
-  allow_implicit_invocation: true

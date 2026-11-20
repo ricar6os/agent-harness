@@ -1,11 +1,58 @@
 # agent-harness
 
-This repository is the upstream harness for meta workspaces: a repo with no product code that groups an
-organization's repositories so AI agents get organization-wide context, cross-repo
-[OpenSpec](https://github.com/Fission-AI/OpenSpec) specs and shared skills. Each meta is a
-copy that keeps this repository's history, so harness updates arrive with a merge.
+Skills, an [OpenSpec](https://github.com/Fission-AI/OpenSpec) schema and a multi-repo workspace
+so AI agents plan and ship changes in phases you can review. Take only the part you need:
+
+| You want | You take | How |
+| -------- | -------- | --- |
+| Skills in any repo | `create-pull-request`, `openspec-tracker-sync`, `unslop` | [Install the skills](#install-the-skills) |
+| Lean OpenSpec changes: specs and one plan of phases | The `spec-plan` schema | [Use the schema in a repo](#use-the-schema-in-a-repo) |
+| One workspace over several repos | This whole repository, as upstream | [Create a meta repo](#create-a-meta-repo) |
+
+## Install the skills
+
+```bash
+npx skills@latest add <owner>/agent-harness
+```
+
+Pick the skills and the agents to install them on. `npx skills` copies skill folders and nothing
+else: no schema, no scripts, no hooks. The skills in the "Meta workspace" group only work inside
+a meta repo. `create-rule`, `deterministify` and `openspec-create-spec-from-code` come from
+[CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness); install them from there.
+
+## Use the schema in a repo
+
+The schema is data for the OpenSpec CLI, so on its own it does nothing: the repo needs the CLI,
+and the agent needs OpenSpec's workflow skills.
+
+1. Install the CLI: `npm i -g @fission-ai/openspec`.
+2. In the repo, run `openspec init --scope project --tools claude,codex`. It creates `openspec/`
+   and installs OpenSpec's workflow skills (`openspec-propose`, `openspec-apply-change` and the
+   others) in the repo. Without `--scope project` they are installed for the whole machine.
+3. Copy the schema. From a public harness:
+   `npx degit <owner>/agent-harness/openspec/schemas/spec-plan openspec/schemas/spec-plan`.
+   From a private one, which `degit` cannot read, with the `gh` CLI:
+
+   ```bash
+   mkdir -p openspec/schemas/spec-plan
+   gh api repos/<owner>/agent-harness/tarball \
+     | tar -xz -C openspec/schemas/spec-plan --strip-components=4 '*/openspec/schemas/spec-plan'
+   ```
+
+4. Select it in `openspec/config.yaml`: `schema: spec-plan`.
+5. Optional, to mirror phases to Linear or GitHub: install `openspec-tracker-sync` with
+   `npx skills`, and copy `x-tracker`, `rules:` and `operations:` from this repository's
+   [`openspec/config.yaml`](openspec/config.yaml).
+
+Then `/openspec-propose` writes lean specs and one `plan.md`, `/openspec-apply-change` implements
+one phase per run, and `/openspec-archive-change` merges the specs. In a single repo the plan
+has no `**Repos:**` lines and nothing else changes.
 
 ## Create a meta repo
+
+A meta is a repo with no product code that groups an organization's repositories, so agents
+get organization-wide context, specs that span repos and shared skills. Each meta is a copy of
+this repository that keeps its history, so harness updates arrive with a merge.
 
 1. Create an empty private repo for the meta: `gh repo create <org>/<name> --private`.
 2. Clone the harness under the meta's name and point it at the new repo, keeping the harness as
@@ -19,8 +66,10 @@ copy that keeps this repository's history, so harness updates arrive with a merg
    ```
 
 3. On a branch, edit `repos.json`: set `org`, list the repos and, if you use them, their `products`.
-4. `make doctor && make sync && make check`, then open the meta's first PR.
-5. Pick the issue tracker with `x-tracker` at the top of `openspec/config.yaml`: `linear`, `github` or `none` (see "Issue tracker" below). With Linear, the team is resolved with the user at the first sync.
+4. `make doctor && make sync && make check`.
+5. `openspec init --scope project --tools claude,codex` installs OpenSpec's workflow skills in the
+   meta. It keeps `openspec/config.yaml` as it is. Commit them, then open the meta's first PR.
+6. Pick the issue tracker with `x-tracker` at the top of `openspec/config.yaml`: `linear`, `github` or `none` (see "Issue tracker" below). With Linear, the team is resolved with the user at the first sync.
 
 ## Bring harness updates into a meta
 
@@ -32,7 +81,7 @@ make check && make test
 ```
 
 Conflicts can only come from instance-owned files (below) or from harness files the meta
-changed on purpose, such as the `x-tracker` line of step 5: keep the meta's side for those.
+changed on purpose, such as the `x-tracker` line of step 6: keep the meta's side for those.
 Open the result as a PR in the meta.
 
 ## Harness files and your files
@@ -41,7 +90,7 @@ Open the result as a PR in the meta.
 | ------------------------------------------------ | -------------- |
 | `scripts/`, `Makefile`, `tests/` | `repos.json` |
 | `.agents/skills/` (custom and vendored) | `docs/conventions/` (workspace conventions no rule can check) |
-| `.claude/`, `.opencode/`, `.github/workflows/` | `openspec/changes/`, `openspec/specs/` |
+| `.claude/`, `.opencode/`, `.github/workflows/` | `openspec/changes/`, `openspec/specs/`, the `openspec-*` skills that `openspec init` installs |
 | `docs/agents/`, `openspec/schemas/`, `openspec/cli-version` | The `x-tracker` line and your own additions to the `context:` of `openspec/config.yaml` |
 | MCP config files (`.mcp.json`, `.codex/config.toml`, `opencode.json`) | `env/` |
 | Guardrail wiring (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/guard.js`) | |
@@ -290,7 +339,7 @@ planned, so each part can change without the others:
 | ----- | ---- | ----- |
 | Core | Agent instructions as a map, guardrails, checks, MCP parity, secrets, PR and rule skills | `AGENTS.md`, `docs/agents/`, `scripts/`, `.agents/skills/` |
 | Topology | Where the code lives: one repo, this meta with `repos.json`, or an OpenSpec store (beta, not wired yet) | `repos.json`, `scripts/init.sh`, the `context:` of `openspec/config.yaml` |
-| Method | How a change is specified, planned and implemented | `openspec/schemas/spec-plan/`, the `openspec-*` skills |
+| Method | How a change is specified, planned and implemented | `openspec/schemas/spec-plan/`, driven by OpenSpec's own workflow skills |
 
 The method touches the topology in one place: a plan names repos, and the workspace says how a
 name becomes a checkout and a verification command. Here that is `repos.json` and
@@ -325,14 +374,14 @@ review the phase. Run apply again for the next phase.
 
 ### How much OpenSpec
 
-The workspace depends on OpenSpec for its file layout (`openspec/specs/`, `openspec/changes/`, delta
-specs) and for six CLI commands: `new change`, `status`, `instructions`, `list`, `validate` and
-`archive`. The four `openspec-*` workflow skills are our own, short and written for this schema;
-the CLI's generated skills are not installed, because they are written for the default schema
-and contradict ours (they list `proposal.md`, `design.md` and `tasks.md`, and their apply runs
-every task instead of one phase). `tests/test_openspec.py` runs each command against the schema
-and its templates, so a CLI upgrade that breaks one fails `make test`.
-[`docs/agents/openspec.md`](docs/agents/openspec.md) lists what each command is used for.
+OpenSpec appears in three places: the schema, `openspec/config.yaml` and the
+`openspec-tracker-sync` skill. The workflow skills are OpenSpec's own, installed by
+`openspec init` and not versioned here; the schema and the config change what they produce.
+Two of their defaults do not apply with this schema: `openspec-propose` lists `proposal.md`,
+`design.md` and `tasks.md` as the default artifacts, and `openspec-apply-change` says to continue
+through every task. The schema's apply rule overrides the second in so many words.
+`tests/test_openspec.py` runs the CLI against the schema, its templates and the config, so an
+upgrade that stops handing them to the skills fails `make test`.
 
 ### Products
 
@@ -398,17 +447,18 @@ meta; do not fork the script); one no rule can check goes to `docs/conventions/`
 
 ## Skills
 
-- **Root skills** live in `.agents/skills/` (canonical), each with a symlink in `.claude/skills/`. Two kinds:
-  - _Custom_: written here. `openspec-explore`, `openspec-propose`, `openspec-apply-change` and
-    `openspec-archive-change` are the workflow; `openspec-tracker-sync` mirrors phases to the
-    tracker; `sync-repos` clones and updates the repos; `unslop` edits writing.
-    `create-pull-request` and `openspec-create-spec-from-code` are adapted from
-    CodelyTV/agent-harness (MIT): the first writes the title and body of a PR with evidence,
-    deploy steps, rollback and links between the PRs of a phase; the second writes the baseline
-    main specs of existing behaviour from the code, and only the user starts it.
-  - _Vendored_ (`create-rule`, `deterministify` from
+- **Root skills** live in `.agents/skills/` (canonical), each with a symlink in `.claude/skills/`. Three kinds:
+  - _Custom_: written here and installable elsewhere with `npx skills` (groups in
+    `skills.sh.json`). `create-pull-request` (adapted from CodelyTV/agent-harness, MIT) writes the
+    title and body of a PR with evidence, deploy steps, rollback and links between the PRs of a
+    phase; `openspec-tracker-sync` mirrors phases to the tracker; `unslop` edits writing;
+    `sync-repos` clones and updates the repos, and only works in a meta.
+  - _Vendored_ (`create-rule`, `deterministify`, `openspec-create-spec-from-code` from
     [CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness)): upstream skills pinned
-    in `skills-lock.json`, never edited here.
+    in `skills-lock.json`, never edited here. Update one with `npx skills update <name>`.
+  - _OpenSpec's workflow skills_ (`openspec-propose` and the others): installed in a meta by
+    `openspec init --scope project`, owned by that meta. To change what they do, change the
+    schema or `openspec/config.yaml`.
 - **Per-repo skills**: `repos/<name>/.agents/skills/` (or `.claude/skills/`), owned by each
   repository. Neither tool offers them from the meta root on its own: Claude Code loads skills
   below the start directory only once it touches a file there (and in our tests never from the
