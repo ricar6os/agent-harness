@@ -1,6 +1,6 @@
 # Meta workspace
 
-This repository holds no product code. It gives AI agents one entry point with visibility across every repository of the organization, and it holds the specs of work that spans several of them. `README.md` describes the layout: the `repos.json` manifest, `scripts/`, the clones in `repos/<name>/`, the secrets in `env/`, `openspec/` and `.agents/skills/`.
+This repository holds no product code. It gives AI agents one entry point with visibility across every repository of the organization, and it holds the specs of work that spans several of them. `docs/reference/workspace.md` describes the layout: the `repos.json` manifest, `scripts/`, the clones in `repos/<name>/`, the secrets in `env/`, `openspec/` and `.agents/skills/`.
 
 ## Language
 

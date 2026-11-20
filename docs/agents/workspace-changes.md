@@ -9,13 +9,13 @@ Yes, allowed:
 
 - **Cloned repos (`repos/<name>`)**: edit code, run tests, branch, commit, push, open PRs per repo.
 - **This meta repo**: add or edit skills in `.agents/skills/`, create OpenSpec changes
-  under `openspec/changes/`, improve `scripts/`, update `AGENTS.md` and `README.md`, add repos to
+  under `openspec/changes/`, improve `scripts/`, update `AGENTS.md`, `README.md` and `docs/`, add repos to
   `repos.json`.
 
 `AGENTS.md` is a map capped at 6000 bytes (rule `agents-map`): put detail in `docs/agents/` and
 link it from the map. To open a PR in this repo follow [working-on-a-repo.md](working-on-a-repo.md); the
 checks are `make check` and `make test`. Run `make check` before committing here: `python3 scripts/check.py --list` names every rule it enforces, and
-[`README.md`](../../README.md#checks) "Checks" says what each one verifies. Fix what it
+[`docs/reference/checks.md`](../reference/checks.md#checks) says what each one verifies. Fix what it
 reports; never bypass it.
 
 ## Ask first
@@ -24,7 +24,7 @@ The ask-first list and the hook rule are in [`AGENTS.md`](../../AGENTS.md) "Hard
 
 ## Adding a repo to the manifest
 
-Add the entry to `repos.json` (format: [`README.md`](../../README.md#manifest-reposjson), "Manifest (`repos.json`)"), run `make sync ONLY=<name>`
+Add the entry to `repos.json` (format: [`docs/reference/workspace.md`](../reference/workspace.md#manifest-reposjson), "Manifest (`repos.json`)"), run `make sync ONLY=<name>`
 to clone it, then `make check`.
 
 ## Custom skills

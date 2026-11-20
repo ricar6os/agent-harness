@@ -1,5 +1,5 @@
 // Guardrails for OpenCode: ask scripts/guard.py before every tool call and throw its reason
-// when the call is blocked. The decisions live in scripts/guard.py (see README.md, "Guardrails").
+// when the call is blocked. The decisions live in scripts/guard.py (see docs/reference/guardrails.md).
 import { spawnSync } from "node:child_process"
 import { fileURLToPath } from "node:url"
 

@@ -120,7 +120,7 @@ def nonempty_str(value):
 # ---------------------------------------------------------------------------------------------
 
 @rule("manifest", "repos.json has a known shape, valid products and unique names and paths",
-      'README.md, section "Manifest (`repos.json`)"')
+      'docs/reference/workspace.md, section "Manifest (`repos.json`)"')
 def check_manifest(root):
     out = []
     rel = "repos.json"
@@ -133,7 +133,7 @@ def check_manifest(root):
         bad("file %s. Fix the syntax." % err)
         return out
     if data is None:
-        bad("file not found. Create it from the example in README.md, section \"Manifest (repos.json)\".")
+        bad("file not found. Create it from the example in docs/reference/workspace.md, section \"Manifest (repos.json)\".")
         return out
     if not isinstance(data, dict):
         bad("top level must be an object with the keys org, root and repos.")
@@ -251,13 +251,6 @@ def parse_simple_yaml(text):
     return result
 
 
-LEGACY_KEYS = collections.OrderedDict([
-    ("product", "x-product"),
-    ("linear_project", "x-linear-project"),
-    ("linear_sync_version", "x-linear-sync-version"),
-])
-
-
 def list_change_dirs(root):
     base = Path(root) / "openspec" / "changes"
     active, archived = [], []
@@ -274,7 +267,7 @@ def relpath(root, path):
     return Path(os.path.relpath(str(path), str(root))).as_posix()
 
 
-@rule("change-product", "a change has a known product exactly when repos.json declares products; spec paths and Linear project ids agree",
+@rule("change-product", "a change has a known product exactly when repos.json declares products; spec paths agree; no tracker container is shared",
       'docs/agents/openspec.md, section "Products and trackers"')
 def check_change_product(root):
     out = []
@@ -282,13 +275,15 @@ def check_change_product(root):
     known = known_products(root)
     spec_shape = "<product>/<capability>/spec.md" if known else "<capability>/spec.md"
     active, archived = list_change_dirs(root)
-    projects = collections.OrderedDict()
+    containers = collections.OrderedDict()
 
-    def record_project(change_dir, meta):
-        linear = meta.get("x-linear-project", meta.get("linear_project"))
-        pid = linear.get("id") if isinstance(linear, dict) else None
-        if pid:
-            projects.setdefault(pid, []).append(change_dir)
+    def record_container(change_dir, meta):
+        """The tracker container of a change: its Linear project or its GitHub parent issue."""
+        linear, github = meta.get("x-linear-project"), meta.get("x-github-issue")
+        if isinstance(linear, dict) and linear.get("id"):
+            containers.setdefault("x-linear-project.id %s" % linear["id"], []).append(change_dir)
+        if isinstance(github, dict) and github.get("repo") and github.get("number"):
+            containers.setdefault("x-github-issue %s#%s" % (github["repo"], github["number"]), []).append(change_dir)
 
     for change in active:
         yaml_rel = relpath(root, change / ".openspec.yaml")
@@ -296,18 +291,12 @@ def check_change_product(root):
         meta = parse_simple_yaml(text) if text is not None else {}
         product = meta.get("x-product")
         product = product if isinstance(product, str) and product else None
-        legacy = [k for k in LEGACY_KEYS if k in meta]
-        for old in legacy:
-            out.append(Violation("change-product", yaml_rel, None,
-                                 "`%s` is the old key name. Rename it to `%s`, value unchanged: OpenSpec 2 rejects "
-                                 "unknown keys in strict validation, and only `x-` keys are kept without a warning."
-                                 % (old, LEGACY_KEYS[old])))
         if text is None:
             if known:
                 out.append(Violation("change-product", relpath(root, change), None,
                                      "missing .openspec.yaml. Create it with a top-level `x-product: <slug>`."))
         elif product is None:
-            if known and "product" not in legacy:
+            if known:
                 out.append(Violation("change-product", yaml_rel, None,
                                      "no top-level `x-product: <slug>`. Record the one product this change belongs to."))
         elif not known:
@@ -318,7 +307,7 @@ def check_change_product(root):
             out.append(Violation("change-product", yaml_rel, None,
                                  'product "%s" is not in repos.json. Known products: %s. Fix the slug or add the product to a repo.'
                                  % (product, ", ".join(sorted(known)))))
-        record_project(change, meta)
+        record_container(change, meta)
         specs = change / "specs"
         if specs.is_dir():
             for spec in sorted(specs.rglob("spec.md")):
@@ -336,7 +325,7 @@ def check_change_product(root):
     for change in archived:
         text = read_text(change / ".openspec.yaml")
         if text is not None:
-            record_project(change, parse_simple_yaml(text))
+            record_container(change, parse_simple_yaml(text))
 
     main_specs = root / "openspec" / "specs"
     if main_specs.is_dir():
@@ -350,12 +339,12 @@ def check_change_product(root):
                                      'main spec directory "%s" is not a product in repos.json. Known products: %s.'
                                      % (parts[0], ", ".join(sorted(known)))))
 
-    for pid, dirs in projects.items():
+    for container, dirs in containers.items():
         if len(dirs) > 1:
             names = ", ".join(relpath(root, d) for d in dirs)
             out.append(Violation("change-product", relpath(root, dirs[0] / ".openspec.yaml"), None,
-                                 "x-linear-project.id %s is used by %d changes: %s. Each change has its own Linear project."
-                                 % (pid, len(dirs), names)))
+                                 "%s is used by %d changes: %s. Each change has its own Linear project or GitHub parent issue."
+                                 % (container, len(dirs), names)))
     return out
 
 
@@ -600,7 +589,7 @@ def mcp_servers(root):
 
 
 @rule("mcp-parity", "every MCP server is declared, with the same url, in .mcp.json, .codex/config.toml and opencode.json",
-      'README.md, section "MCP servers"', tools=True)
+      'docs/reference/workspace.md, section "MCP servers"', tools=True)
 def check_mcp_parity(root, require_tools=False):
     out = []
     try:
@@ -959,7 +948,7 @@ def has_guard_plugin(text, agent_flag):
 
 
 @rule("guardrails", "scripts/guard.py is executable and each agent's hook or plugin runs it before shell tool calls",
-      'README.md, section "Guardrails"')
+      'docs/reference/guardrails.md, section "Guardrails"')
 def check_guardrails(root):
     root = Path(root)
     out = []
@@ -1124,8 +1113,8 @@ def split_link(raw):
     return path, urllib.parse.unquote(fragment)
 
 
-@rule("agents-map", "AGENTS.md is a map of at most 6000 bytes, links every docs/agents/*.md, and relative links resolve",
-      'README.md, section "AGENTS.md is a map"')
+@rule("agents-map", "AGENTS.md is a map of at most 6000 bytes, links every docs/agents/*.md, and relative links in the docs resolve",
+      'docs/reference/checks.md, section "AGENTS.md is a map"')
 def check_agents_map(root):
     out = []
     root = Path(root)
@@ -1140,8 +1129,11 @@ def check_agents_map(root):
                              % (size, AGENTS_MAP_LIMIT)))
     docs_dir = root / "docs" / "agents"
     docs = sorted(docs_dir.glob("*.md")) if docs_dir.is_dir() else []
+    reference_dir = root / "docs" / "reference"
+    others = [p for p in [root / "README.md"] if p.is_file()]
+    others += sorted(reference_dir.glob("*.md")) if reference_dir.is_dir() else []
     linked = set()
-    for md in [agents] + docs:
+    for md in [agents] + docs + others:
         text = read_text(md)
         if text is None:
             continue

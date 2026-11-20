@@ -16,7 +16,6 @@ Fetch an issue and its comments before editing it, and cite issues by their id (
 x-linear-project:
   id: <Linear project UUID>
   url: <Linear project URL>
-x-linear-sync-version: 3
 ```
 
 ## Specifics
@@ -33,8 +32,3 @@ x-linear-sync-version: 3
 - **Finished**: status type completed (Done).
 - **PR titles**: the phase's issue id is the first word of the description, in every repo of
   that phase: `feat(login): ABC-123 add magic-link sign-in`.
-
-## Older changes
-
-A change with `tasks.md` and `x-linear-sync-version: 2` uses the old Epic and task mapping. Do
-not sync it: tell the user, and leave it until it is archived or they migrate it by hand.

@@ -71,7 +71,7 @@ def make_workspace(parent):
     link.parent.mkdir(parents=True)
     os.symlink("../../../.agents/skills/demo/SKILL.md", str(link))
     write(root, "openspec/changes/add-x/.openspec.yaml",
-          "schema: spec-plan\nx-product: shop\nx-linear-project:\n  id: p-1\n  url: https://linear.app/p-1\nx-linear-sync-version: 2\n")
+          "schema: spec-plan\nx-product: shop\nx-linear-project:\n  id: p-1\n  url: https://linear.app/p-1\n")
     write(root, "openspec/changes/add-x/specs/shop/orders/spec.md", "## ADDED Requirements\n")
     write(root, "openspec/changes/add-x/plan.md", "# Plan\n")
     write(root, "openspec/specs/shop/orders/spec.md", "# orders\n")
@@ -310,44 +310,21 @@ class ChangeProductTests(Base):
         write(self.ws, "openspec/specs/billing/invoices/spec.md")
         self.assertViolation(self.rule("change-product"), "change-product", 'main spec directory "billing" is not a product')
 
-    def test_legacy_keys_each_reported_with_replacement(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml",
-              "schema: spec-plan\nx-product: shop\nlinear_project:\n  id: p-9\nlinear_sync_version: 2\n")
-        vs = self.rule("change-product")
-        self.assertEqual(2, len(vs), vs)
-        self.assertTrue(any("`linear_project`" in v.message and "`x-linear-project`" in v.message for v in vs))
-        self.assertTrue(any("`linear_sync_version`" in v.message and "`x-linear-sync-version`" in v.message for v in vs))
-        self.assertTrue(all("OpenSpec 2 rejects unknown keys" in v.message for v in vs))
-
-    def test_legacy_product_reports_only_migration(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-plan\nproduct: shop\n")
-        vs = self.rule("change-product")
-        self.assertEqual(1, len(vs), vs)
-        self.assertIn("`product` is the old key name. Rename it to `x-product`", vs[0].message)
-
-    def test_legacy_and_new_product_both_present(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "x-product: shop\nproduct: shop\n")
-        vs = self.rule("change-product")
-        self.assertEqual(1, len(vs), vs)
-        self.assertIn("Rename it to `x-product`", vs[0].message)
-
-    def test_archived_legacy_keys_are_history(self):
-        write(self.ws, "openspec/changes/archive/2026-01-01-old/.openspec.yaml",
-              "product: shop\nlinear_project:\n  id: p-7\nlinear_sync_version: 2\n")
-        self.assertClean(self.rule("change-product"))
-
-    def test_linear_project_shared_with_archived_legacy_change(self):
-        write(self.ws, "openspec/changes/archive/2026-01-01-old/.openspec.yaml", "product: shop\nlinear_project:\n  id: p-1\n")
-        vs = [v for v in self.rule("change-product") if "p-1" in v.message]
-        self.assertEqual(1, len(vs))
-        self.assertIn("x-linear-project.id p-1", vs[0].message)
-
     def test_linear_project_shared_with_archived_change(self):
         write(self.ws, "openspec/changes/archive/2026-01-01-old/.openspec.yaml", "x-product: shop\nx-linear-project:\n  id: p-1\n")
         vs = [v for v in self.rule("change-product") if "p-1" in v.message]
         self.assertEqual(1, len(vs))
         self.assertIn("add-x", vs[0].message)
         self.assertIn("2026-01-01-old", vs[0].message)
+
+    def test_github_parent_issue_shared_between_changes(self):
+        for name in ("add-x", "add-y"):
+            write(self.ws, "openspec/changes/%s/.openspec.yaml" % name,
+                  "x-product: shop\nx-github-issue:\n  repo: acme/meta\n  number: 12\n  url: https://github.com/acme/meta/issues/12\n")
+        vs = self.rule("change-product")
+        self.assertViolation(vs, "change-product", "x-github-issue acme/meta#12 is used by 2 changes")
+        write(self.ws, "openspec/changes/add-y/.openspec.yaml", "x-product: shop\nx-github-issue:\n  repo: acme/meta\n  number: 13\n")
+        self.assertClean(self.rule("change-product"))
 
     def test_distinct_linear_projects_pass(self):
         write(self.ws, "openspec/changes/archive/old/.openspec.yaml", "x-product: shop\nx-linear-project:\n  id: p-2\n")
@@ -359,12 +336,6 @@ class ChangeProductTests(Base):
         self.assertClean(self.rule("change-product"))
         parsed = check.parse_simple_yaml('"x-product": shop\n\'n\':\n  "id": q\n')
         self.assertEqual({"x-product": "shop", "n": {"id": "q"}}, parsed)
-
-    def test_quoted_legacy_key_gets_the_migration_message(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "'product': shop\n")
-        vs = self.rule("change-product")
-        self.assertEqual(1, len(vs), vs)
-        self.assertIn("`product` is the old key name. Rename it to `x-product`", vs[0].message)
 
     def test_yaml_parser(self):
         parsed = check.parse_simple_yaml("a: 'x'\nb: y # c\nn:\n  id: \"q\"\n  url: https://h/p\n")
@@ -890,6 +861,14 @@ class AgentsMapTests(Base):
         write(self.ws, "GLOSSARY-MAP.md", "# map\n")
         self.assertClean(self.rule("agents-map"))
 
+    def test_links_of_the_readme_and_the_reference_docs_are_checked(self):
+        write(self.ws, "README.md", "[gone](docs/reference/gone.md)\n")
+        write(self.ws, "docs/reference/a.md", "# A\n\n[up](../../README.md#nope) [ok](../agents/a.md)\n")
+        vs = self.rule("agents-map")
+        self.assertViolation(vs, "agents-map", "link to docs/reference/gone.md does not resolve")
+        self.assertViolation(vs, "agents-map", "link to ../../README.md#nope")
+        self.assertEqual(2, len([v for v in vs if v.path in ("README.md", "docs/reference/a.md")]), vs)
+
     def test_urls_anchors_and_code_are_ignored(self):
         write(self.ws, "docs/agents/a.md",
               "[u](https://x.test/p) [m](mailto:a@b.c) [h](#here) `[c](nope.md)`\n\n```\n[f](nope2.md)\n```\n")
@@ -1016,7 +995,7 @@ class CliTests(Base):
         lines = out.splitlines()
         self.assertEqual(1, code)
         self.assertTrue(lines[0].startswith('manifest: repos.json: repos[0] "w": unknown key "product"'))
-        self.assertEqual('  Convention: README.md, section "Manifest (`repos.json`)"', lines[1])
+        self.assertEqual('  Convention: docs/reference/workspace.md, section "Manifest (`repos.json`)"', lines[1])
         self.assertEqual("check: 1 violation in 1 rule", lines[-1])
 
     def test_unknown_rule_is_a_usage_error(self):

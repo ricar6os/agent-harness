@@ -45,6 +45,6 @@ apply:
     1. Resolve each repo of the phase (its checkout and its verification command) as the workspace instructions say. Work on a branch in each repo, never on its default branch.
     2. Implement the tasks in the phase's repo order and check off each one as you finish it.
     3. Run the verification task in every repo the phase touched. Fix what fails before going on.
-    4. Add or update in the frontmatter `implemented_by` (same shape as `created_by`, for the tool and model of this run), `last_implementation_at`, and `completed: true` after the last phase. Rewrite the Next step.
+    4. Add or update in the frontmatter `implemented_by` (same shape as `created_by`, for the tool and model of this run), `last_implementation_at` (the output of `date -u +%Y-%m-%dT%H:%M:%SZ`), and `completed: true` after the last phase. Rewrite the Next step.
     5. Commit the phase as one conventional commit in each repo it touched, and plan.md in the repo that holds the change. Never push or open a pull request.
     6. Stop and report what changed per repo. The next phase starts only when the user runs apply again.

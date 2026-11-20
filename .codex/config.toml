@@ -1,6 +1,6 @@
 # Project-level Codex config for the meta workspace.
 # Codex only loads this file once the repository is marked as trusted
-# (`codex` prompts on first run in a new clone; see README.md, section "MCP servers").
+# (`codex` prompts on first run in a new clone; see docs/reference/workspace.md, section "MCP servers").
 #
 # Keep this file limited to what the whole team needs. Personal preferences
 # (feature flags, model, theme) belong in ~/.codex/config.toml.
