@@ -31,8 +31,9 @@ the local files for a later sync. Never fall back to the other tracker.
   tracker returned. A phase's issue reference goes at the end of its heading:
   `### Phase 1: Durable order ids [ABC-123]`. Write each one as soon as the tracker returns it.
 - **Resolve the container.** Use the user's choice or the recorded one; if they conflict, ask.
-  With neither, create it only after the user agrees. Never bind a container that another
-  change, archived ones included, already records.
+  With neither, ask whether to use an existing one or create it, and create it only on the
+  user's yes. A container belongs to one change: when another change, archived ones included,
+  already records it, ask for a different one.
 - **Sync phases.** For a phase with a reference, fetch the issue and update only the managed
   fields that changed (title, description). For a phase without one, search the container,
   closed issues included, for its `OpenSpec source:` line: reuse a single match, ask about
@@ -40,8 +41,8 @@ the local files for a later sync. Never fall back to the other tracker.
   An unchanged sync writes nothing. Phases run in file order; write no dependency relations.
 - **Report.** Read back what you wrote. Report the container link, the phases created, updated
   and unchanged, the phases whose state in the tracker disagrees with the checkboxes (left as
-  they are), and orphans: issues of the container whose phase no longer exists. Never delete or
-  close anything.
+  they are), and orphans: issues of the container whose phase no longer exists. Leave orphans as they
+  are; deleting or closing an issue is the user's call.
 
 ## 3. State
 

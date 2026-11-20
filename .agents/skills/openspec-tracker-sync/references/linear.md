@@ -20,8 +20,8 @@ x-linear-sync-version: 3
 
 ## Specifics
 
-- **Creating the project**: only when the user asks and the team is known, named after the plan
-  title. Never change a project's status.
+- **Creating the project**: on the user's yes and once the team is known, named after the plan
+  title. A project's status stays as the user set it.
 - **Product label**: only when the change has `x-product`. Ensure the `Product` group and the
   matching label exist and that the project carries that one label. If it carries a different
   Product label, ask before changing it. Keep labels outside the group.

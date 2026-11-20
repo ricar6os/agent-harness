@@ -31,10 +31,10 @@ The argument is free text. Read it as one of these:
 
 - When `repos.json` declares `products`, resolve and announce the OpenSpec product as the `context:` of `openspec/config.yaml` requires: the user's selection; if there is none, list the products from `repos.json` and ask. Never infer it from the code. A capability belongs to one product: behaviour that two products share becomes one capability in each, each described with that product's vocabulary. Without `products`, there is no product: read `<product>/` in every path and id below as empty, and `--product <slug>` as absent.
 - Run `scripts/init.sh --product <slug> --no-update`: it clones every repo of the product (those whose `products` contains the slug) and every shared repo that is missing, not only the ones the capability touches, and leaves existing clones exactly as they are. Do not use `make sync`: it moves clean clones to their default branch, which would move a user's feature branch. Evidence is read from whatever branch each clone is on; tell the user when a clone is not on its default branch.
-- Run `openspec --version`; it must match `openspec/cli-version`. If the CLI is missing or differs, stop and ask the user to install the pinned version.
+- Run `python3 scripts/check.py --openspec-ok`. When it fails, show its message and stop: the user installs the OpenSpec CLI it names.
 - Read the `context:` of `openspec/config.yaml`. Write the specs in English unless it or `AGENTS.md` says otherwise.
 
-Done when the product is announced, its repos are cloned (the user told of any clone off its default branch) and the CLI answers.
+Done when the product is announced, its repos are cloned (the user told of any clone off its default branch) and the CLI check passes.
 
 ### 2. Bound the capability
 

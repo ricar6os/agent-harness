@@ -14,7 +14,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.parse
 from pathlib import Path
 
@@ -670,11 +669,25 @@ def skill_entries(base):
     return sorted(p for p in base.iterdir() if not p.name.startswith(".") and "--" not in p.name)
 
 
+def is_generated_skill(md):
+    """True when the frontmatter has `author: openspec` under `metadata:`, as the OpenSpec CLI writes it."""
+    lines = frontmatter(read_text(md)) or ()
+    in_metadata = False
+    for line in lines:
+        if re.match(r"^metadata:\s*$", line):
+            in_metadata = True
+        elif in_metadata and re.match(r"^\s+author:\s*[\"']?openspec[\"']?\s*$", line):
+            return True
+        elif in_metadata and line.strip() and not line[:1].isspace():
+            in_metadata = False
+    return False
+
+
 LN_HELP = ("Expose it with `mkdir -p .claude/skills/{n} && ln -s ../../../.agents/skills/{n}/SKILL.md .claude/skills/{n}/SKILL.md`; "
            "a skill with references/ gets a directory link instead: `ln -s ../../.agents/skills/{n} .claude/skills/{n}`.")
 
 
-@rule("skill-exposure", "custom skills have valid frontmatter, are exposed to Claude Code, and nothing is a broken link",
+@rule("skill-exposure", "skills have valid frontmatter, are exposed to Claude Code, are not written by the OpenSpec CLI, and nothing is a broken link",
       'docs/agents/workspace-changes.md, section "Custom skills"')
 def check_skill_exposure(root):
     out = []
@@ -697,6 +710,10 @@ def check_skill_exposure(root):
                                      % (json.dumps(name) if name is not None else "missing", skill.name, skill.name)))
             if not frontmatter_value(lines, "description"):
                 out.append(Violation("skill-exposure", rel, None, "frontmatter has no description. Add `description:` saying when to use the skill."))
+        if is_generated_skill(md):
+            out.append(Violation("skill-exposure", rel, None,
+                                 "written by the OpenSpec CLI (`openspec init` or `openspec update`). This workspace keeps its own "
+                                 "openspec-* skills: restore the file with `git checkout -- %s`, or remove the skill." % rel))
         if not (claude / skill.name / "SKILL.md").is_file():
             out.append(Violation("skill-exposure", ".claude/skills/%s/SKILL.md" % skill.name, None,
                                  "skill .agents/skills/%s is not visible to Claude Code. %s" % (skill.name, LN_HELP.format(n=skill.name))))
@@ -785,13 +802,11 @@ def check_tracked_secrets(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 7. generated-skills
+# 7. openspec-validate
 # ---------------------------------------------------------------------------------------------
 
 PIN_RE = re.compile(r"^\d+\.\d+\.\d+$")
 PIN_FILE = "openspec/cli-version"
-PROFILE_FILE = "openspec/cli-profile.json"
-GENERATED_TOPS = (".agents", ".claude")
 
 
 def pinned_openspec_version(root):
@@ -808,30 +823,6 @@ def pinned_openspec_version(root):
     return version, None
 
 
-def is_generated_skill(md):
-    """True when the frontmatter has `author: openspec` under `metadata:`."""
-    lines = frontmatter(read_text(md)) or ()
-    in_metadata = False
-    for line in lines:
-        if re.match(r"^metadata:\s*$", line):
-            in_metadata = True
-        elif in_metadata and re.match(r"^\s+author:\s*[\"']?openspec[\"']?\s*$", line):
-            return True
-        elif in_metadata and line.strip() and not line[:1].isspace():
-            in_metadata = False
-    return False
-
-
-def generated_skill_files(root):
-    """Relative paths of .agents/skills/*/SKILL.md written by the OpenSpec CLI."""
-    found = []
-    for skill in skill_entries(Path(root) / ".agents" / "skills"):
-        md = skill / "SKILL.md"
-        if md.is_file() and is_generated_skill(md):
-            found.append(relpath(root, md))
-    return found
-
-
 def installed_openspec_version():
     exe = shutil.which("openspec")
     if not exe:
@@ -844,160 +835,45 @@ def installed_openspec_version():
     return res.stdout.strip() or None if res.returncode == 0 else None
 
 
+def version_satisfies(installed, minimum):
+    """True when `installed` is `minimum` or newer within the same major version."""
+    found = re.match(r"^(\d+)\.(\d+)\.(\d+)", installed or "")
+    if not found:
+        return False
+    have, need = tuple(int(n) for n in found.groups()), tuple(int(n) for n in minimum.split("."))
+    return have[0] == need[0] and have >= need
+
+
 def tool_missing(rule_id, require_tools, reason, path="."):
     if require_tools:
         return [Violation(rule_id, path, None, reason)]
     raise Skip(reason)
 
 
-def _excluded(name):
-    return "--" in name or name == "settings.local.json"
-
-
-def _copy_ignore(_directory, names):
-    return [n for n in names if _excluded(n)]
-
-
-def _snapshot(root):
-    """{relative path: (kind, content)} of .agents and .claude: symlinks are not followed."""
-    snap = {}
-    for top in GENERATED_TOPS:
-        base = Path(root) / top
-        if not base.is_dir() or base.is_symlink():
-            continue
-        snap[top] = ("dir", None)
-        for dirpath, dirnames, filenames in os.walk(str(base)):
-            dirnames[:] = sorted(d for d in dirnames if not _excluded(d))
-            for name in sorted(dirnames + filenames):
-                if _excluded(name):
-                    continue
-                path = Path(dirpath) / name
-                rel = path.relative_to(root).as_posix()
-                if path.is_symlink():
-                    snap[rel] = ("link", os.readlink(str(path)))
-                elif path.is_dir():
-                    snap[rel] = ("dir", None)
-                else:
-                    try:
-                        snap[rel] = ("file", path.read_bytes())
-                    except OSError:
-                        snap[rel] = ("file", None)
-            dirnames[:] = [d for d in dirnames if not (Path(dirpath) / d).is_symlink()]
-    return snap
-
-
-def _compare_generated(root, fresh):
-    """Violations for every path whose content, kind or presence differs between the two trees."""
-    old, new = _snapshot(root), _snapshot(fresh)
-    out, reported = [], []
-    for rel in sorted(set(old) | set(new)):
-        if any(rel.startswith(r + "/") for r in reported):
-            continue
-        if rel in old and rel in new:
-            if old[rel] == new[rel]:
-                continue
-            what = ("differs from `openspec update` output: a generated file was edited by hand, or generated with another "
-                    "version or profile.")
-        elif rel in new:
-            what = "is created by `openspec update` but missing here."
-        else:
-            what = "is deleted by `openspec update` but present here: a stale generated file."
-        reported.append(rel)
-        out.append(Violation("generated-skills", rel, None, "%s Run `make openspec` and commit the result." % what))
-    return out
-
-
-def _stale_commands(root, reported):
-    """Leftover /opsx command files. `openspec update` keeps the ones that were edited by hand."""
-    seen = [v.path for v in reported]
-    out = []
-    base = Path(root) / ".claude" / "commands" / "opsx"
-    if not base.is_dir() or base.is_symlink():
-        return out
-    for path in sorted(p for p in base.rglob("*") if not p.is_dir()):
-        rel = relpath(root, path)
-        if any(rel == r or rel.startswith(r + "/") for r in seen):
-            continue
-        out.append(Violation("generated-skills", rel, None,
-                             "stale /opsx command file: OpenSpec 2.x installs skills only, so the commands are gone. "
-                             "Delete it (`git rm -r .claude/commands/opsx`) and run `make openspec`."))
-    return out
-
-
-@rule("generated-skills", "running `make openspec` on a clean copy changes nothing under .agents/ and .claude/",
-      'docs/agents/workspace-changes.md, section "Generated files" (never edited by hand)', tools=True)
-def check_generated_skills(root, require_tools=False):
-    root = Path(root)
-    generated = generated_skill_files(root)
-    pin_present = (root / PIN_FILE).is_file()
-    profile_present = (root / PROFILE_FILE).is_file()
-    if not generated and not pin_present and not profile_present:
-        return []
-    out = []
-    if not pin_present:
-        out.append(Violation("generated-skills", PIN_FILE, None,
-                             "missing. It pins the OpenSpec CLI version the generated skills come from. Create it with the version "
-                             "alone (for example `echo 2.1.1 > %s`) and run `make openspec`." % PIN_FILE))
-    if not profile_present:
-        out.append(Violation("generated-skills", PROFILE_FILE, None,
-                             "missing. It pins the CLI profile the generated skills come from. Create it with "
-                             "`{\"profile\": \"custom\", \"workflows\": [...]}` (see README.md, section \"Checks\") "
-                             "and run `make openspec`."))
-    if out:
-        return out
-    problem = require_pinned_cli("generated-skills", root, require_tools)
-    if problem is not None:
-        return problem
-    updater = Path(__file__).resolve().parent / "openspec-update.sh"
-    tmp = tempfile.mkdtemp(prefix="check-openspec-")
-    try:
-        for top in GENERATED_TOPS:
-            if (root / top).is_dir():
-                shutil.copytree(str(root / top), os.path.join(tmp, top), symlinks=True, ignore=_copy_ignore)
-        os.makedirs(os.path.join(tmp, "openspec", "changes"))
-        os.makedirs(os.path.join(tmp, "openspec", "specs"))
-        for name in ("config.yaml", "cli-profile.json", "cli-version"):
-            if (root / "openspec" / name).is_file():
-                shutil.copy2(str(root / "openspec" / name), os.path.join(tmp, "openspec", name))
-        res = subprocess.run(["bash", str(updater), tmp], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
-        if res.returncode != 0:
-            tail = " | ".join(res.stdout.strip().splitlines()[-5:])
-            return [Violation("generated-skills", "scripts/openspec-update.sh", None,
-                              "regeneration failed (exit %d): %s" % (res.returncode, tail))]
-        out = _compare_generated(root, Path(tmp))
-        return out + _stale_commands(root, out)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-# ---------------------------------------------------------------------------------------------
-# 8. openspec-validate
-# ---------------------------------------------------------------------------------------------
-
-def require_pinned_cli(rule_id, root, require_tools):
-    """Violations when the pin file is invalid or the CLI is not at the pinned version; raises Skip
-    when `require_tools` is off. Returns None when the pinned CLI is installed."""
+def require_cli(rule_id, root, require_tools):
+    """Violations when openspec/cli-version is invalid or the CLI is older than it or of another major
+    version; raises Skip when `require_tools` is off. Returns None when the installed CLI will do."""
     pin, err = pinned_openspec_version(root)
     if pin is None:
         return [Violation(rule_id, PIN_FILE, None,
                           "invalid: %s. Write the version number alone, for example 2.1.1." % err)]
     installed = installed_openspec_version()
-    if installed != pin:
+    if not version_satisfies(installed, pin):
+        major = pin.split(".")[0]
         return tool_missing(rule_id, require_tools,
-                            "openspec %s required (pinned in %s), found %s. Install it: npm i -g @fission-ai/openspec@%s"
-                            % (pin, PIN_FILE, installed or "none", pin))
+                            "openspec %s or a newer %s.x required (%s), found %s. Install it: npm i -g @fission-ai/openspec@%s"
+                            % (pin, major, PIN_FILE, installed or "none", pin))
     return None
 
 
 @rule("openspec-validate", "`openspec validate --all --strict` passes for every change and spec",
-      "openspec/config.yaml", tools=True)
+      "docs/agents/openspec.md", tools=True)
 def check_openspec_validate(root, require_tools=False):
     root = Path(root)
     if not (root / "openspec").is_dir():
         return []
     if (root / PIN_FILE).is_file():
-        problem = require_pinned_cli("openspec-validate", root, require_tools)
+        problem = require_cli("openspec-validate", root, require_tools)
         if problem is not None:
             return problem
     exe = shutil.which("openspec")
@@ -1019,7 +895,7 @@ def check_openspec_validate(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 9. guardrails
+# 8. guardrails
 # ---------------------------------------------------------------------------------------------
 
 GUARD_SCRIPT = "scripts/guard.py"
@@ -1134,7 +1010,7 @@ def check_guardrails(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 10. agents-map
+# 9. agents-map
 # ---------------------------------------------------------------------------------------------
 
 AGENTS_MAP_LIMIT = 6000
@@ -1334,7 +1210,9 @@ def main(argv=None):
     parser.add_argument("--require-tools", action="store_true",
                         help="a rule that cannot run for lack of a tool is a violation, not a skip")
     parser.add_argument("--openspec-version", action="store_true",
-                        help="print the pinned OpenSpec CLI version and exit")
+                        help="print the OpenSpec CLI version of openspec/cli-version (the one CI installs) and exit")
+    parser.add_argument("--openspec-ok", action="store_true",
+                        help="exit 0 when the installed OpenSpec CLI is that version or a newer one of the same major")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -1352,6 +1230,17 @@ def main(argv=None):
             return 2
         print(version)
         return 0
+    if args.openspec_ok:
+        version, err = pinned_openspec_version(root)
+        if version is None:
+            print("check: cannot determine the OpenSpec version: %s" % err, file=sys.stderr)
+            return 2
+        installed = installed_openspec_version()
+        if version_satisfies(installed, version):
+            return 0
+        print("openspec %s or a newer %s.x required (%s), found %s"
+              % (version, version.split(".")[0], PIN_FILE, installed or "none"), file=sys.stderr)
+        return 1
     if not root.is_dir():
         print("check: --root %s is not a directory" % args.root, file=sys.stderr)
         return 2

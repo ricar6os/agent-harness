@@ -1,6 +1,6 @@
 # Spec format
 
-A main spec lives at `openspec/specs/<product>/<capability>/spec.md`. The OpenSpec CLI (pinned in `openspec/cli-version`) parses it by its headings, so this skeleton is the contract that `openspec validate`, `openspec show` and every later change rely on.
+A main spec lives at `openspec/specs/<product>/<capability>/spec.md`. The OpenSpec CLI parses it by its headings, so this skeleton is the contract that `openspec validate`, `openspec show` and every later change rely on.
 
 ```markdown
 # <product>/<capability> Specification
@@ -36,7 +36,7 @@ Checked with CLI 2.1.1:
 - One `## Purpose` and one `## Requirements`. A Purpose under 50 characters, or a placeholder such as `TBD`, is a warning, and warnings fail `--strict`.
 - Every requirement heading starts with `### Requirement: `, and its text holds `SHALL` or `MUST`.
 - The text of a requirement, between its heading and its first scenario, stays within 500 characters. Longer text is a warning: move examples and edge cases into scenarios, or split the requirement.
-- Every requirement has at least one `#### Scenario: ` with a `- **WHEN**` and a `- **THEN**` bullet. `- **AND**` bullets may follow either.
+- Every requirement has at least one `#### Scenario: ` with a `WHEN` (or `GIVEN`) and a `THEN`, in capitals. This skill writes one bullet each, `- **WHEN**` and `- **THEN**`; `- **AND**` bullets may follow either. The one-line form of a change's delta specs (`- GIVEN ..., WHEN ..., THEN ...`) is valid too, so leave existing scenarios in the form they have.
 - Requirement names are unique in the spec: later changes reference them by name.
 - A main spec states behaviour, so it uses only `## Requirements`. The `ADDED`, `MODIFIED`, `REMOVED` and `RENAMED` sections belong to the delta specs of a change.
 - The structural headings and the `SHALL`/`MUST` keywords stay in English whatever language the spec is written in.

@@ -531,6 +531,13 @@ class SkillExposureTests(Base):
     def test_green(self):
         self.assertClean(self.rule("skill-exposure"))
 
+    def test_skill_written_by_the_openspec_cli_is_reported(self):
+        write(self.ws, ".agents/skills/demo/SKILL.md",
+              "---\nname: demo\ndescription: d\nmetadata:\n  author: openspec\n  version: \"1.0\"\n---\nBody\n")
+        self.assertViolation(self.rule("skill-exposure"), "skill-exposure", "written by the OpenSpec CLI")
+        write(self.ws, ".agents/skills/demo/SKILL.md", "---\nname: demo\ndescription: d\nmetadata:\n  author: me\n---\nBody\n")
+        self.assertClean(self.rule("skill-exposure"))
+
     def test_name_mismatch(self):
         write(self.ws, ".agents/skills/demo/SKILL.md", "---\nname: other\ndescription: d\n---\n")
         self.assertViolation(self.rule("skill-exposure"), "skill-exposure", 'frontmatter name is "other" but the directory is "demo"')
@@ -746,186 +753,29 @@ class GuardrailsTests(Base):
         self.assertViolation(self.rule("guardrails"), "guardrails", "does not invoke")
 
 
-def generated_ws(parent):
-    """A copy of this repo's generated files and OpenSpec pins, enough for the generated-skills rule."""
-    root = Path(parent) / "gen"
-    for top in (".agents", ".claude"):
-        shutil.copytree(str(REPO / top), str(root / top), symlinks=True, ignore=check._copy_ignore)
-    for name in ("config.yaml", "cli-profile.json", "cli-version"):
-        write(root, "openspec/" + name, (REPO / "openspec" / name).read_text())
-    return root
-
-
-def tree_state(root):
-    """{relative path: ("file", bytes) | ("link", target) | ("dir",)} for everything under root, links not followed."""
-    state = {}
-    for dirpath, dirnames, filenames in os.walk(str(root)):
-        for name in dirnames + filenames:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, str(root))
-            if os.path.islink(full):
-                state[rel] = ("link", os.readlink(full))
-            elif os.path.isdir(full):
-                state[rel] = ("dir",)
-            else:
-                with open(full, "rb") as handle:
-                    state[rel] = ("file", handle.read())
-        dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
-    return state
-
-
-class GeneratedSkillsTests(unittest.TestCase):
+class CliVersionTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="check-gen-")
+        self.tmp = tempfile.mkdtemp(prefix="check-pin-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.root = generated_ws(self.tmp)
+        self.root = Path(self.tmp)
 
-    def run_rule(self, **kwargs):
-        return check.check_generated_skills(self.root, **kwargs)
-
-    def need_cli(self):
-        pin, _ = check.pinned_openspec_version(REPO)
-        if check.installed_openspec_version() != pin:
-            self.skipTest("openspec %s is not on PATH" % pin)
-
-    def test_pinned_version_is_read_from_the_file(self):
-        version, err = check.pinned_openspec_version(self.root)
-        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
-        self.assertIsNone(err)
+    def test_version_is_read_from_the_file(self):
+        self.assertEqual((None, "openspec/cli-version not found"), check.pinned_openspec_version(self.root))
         write(self.root, "openspec/cli-version", " 3.4.5 \n\n")
         self.assertEqual(("3.4.5", None), check.pinned_openspec_version(self.root))
 
-    def test_generated_skills_are_found_by_their_author(self):
-        found = check.generated_skill_files(self.root)
-        self.assertIn(".agents/skills/openspec-explore/SKILL.md", found)
-        self.assertNotIn(".agents/skills/openspec-tracker-sync/SKILL.md", found)
-        self.assertNotIn(".agents/skills/unslop/SKILL.md", found)
-
-    def test_missing_cli_version_is_a_violation(self):
-        (self.root / "openspec/cli-version").unlink()
-        vs = self.run_rule()
-        self.assertEqual(["openspec/cli-version"], [v.path for v in vs])
-        self.assertIn("missing", vs[0].message)
-        self.assertIn("echo 2.1.1 > openspec/cli-version", vs[0].message)
-
-    def test_malformed_cli_version_is_a_violation(self):
+    def test_malformed_version_is_an_error(self):
         for text in ("v2.1.1\n", "2.1\n", "2.1.1 2.1.2\n", "\n"):
             write(self.root, "openspec/cli-version", text)
-            vs = self.run_rule()
-            self.assertEqual(["openspec/cli-version"], [v.path for v in vs], text)
-            self.assertIn("invalid", vs[0].message)
+            version, err = check.pinned_openspec_version(self.root)
+            self.assertIsNone(version, text)
+            self.assertIn("must contain one version", err)
 
-    def test_missing_profile_is_a_violation(self):
-        (self.root / "openspec/cli-profile.json").unlink()
-        vs = self.run_rule()
-        self.assertEqual(["openspec/cli-profile.json"], [v.path for v in vs])
-        self.assertIn("make openspec", vs[0].message)
-
-    def test_both_files_missing_gives_one_violation_each(self):
-        (self.root / "openspec/cli-profile.json").unlink()
-        (self.root / "openspec/cli-version").unlink()
-        self.assertEqual(["openspec/cli-version", "openspec/cli-profile.json"], [v.path for v in self.run_rule()])
-
-    def test_no_generated_skills_and_no_pin_files_passes(self):
-        empty = Path(self.tmp) / "empty"
-        empty.mkdir()
-        self.assertEqual([], check.check_generated_skills(empty))
-        write(empty, ".agents/skills/demo/SKILL.md", "---\nname: demo\ndescription: d\nmetadata:\n  author: me\n---\n")
-        self.assertEqual([], check.check_generated_skills(empty))
-        self.assertEqual((None, "openspec/cli-version not found"), check.pinned_openspec_version(empty))
-
-    def test_without_cli_it_is_a_skip_or_a_violation_under_require_tools(self):
-        with mock.patch.object(check.shutil, "which", return_value=None):
-            with self.assertRaises(check.Skip) as ctx:
-                self.run_rule()
-            self.assertIn("found none", str(ctx.exception))
-            self.assertIn("npm i -g @fission-ai/openspec@", str(ctx.exception))
-            vs = self.run_rule(require_tools=True)
-        self.assertEqual("generated-skills", vs[0].rule)
-        self.assertIn("openspec", vs[0].message)
-
-    def test_cli_at_another_version_is_a_skip_naming_both_versions(self):
-        pin, _ = check.pinned_openspec_version(self.root)
-        with mock.patch.object(check, "installed_openspec_version", return_value="0.0.1"):
-            with self.assertRaises(check.Skip) as ctx:
-                self.run_rule()
-            self.assertIn(pin, str(ctx.exception))
-            self.assertIn("0.0.1", str(ctx.exception))
-            vs = self.run_rule(require_tools=True)
-        self.assertIn("0.0.1", vs[0].message)
-        self.assertIn("npm i -g @fission-ai/openspec@" + pin, vs[0].message)
-
-    def test_green_on_unchanged_files_and_root_is_never_written(self):
-        self.need_cli()
-        before = tree_state(self.root)
-        self.assertGreater(len(before), 20)
-        self.assertEqual([], [v.render() for v in self.run_rule()])
-        self.assertEqual(before, tree_state(self.root))
-
-    def test_tree_state_sees_content_and_link_target_changes(self):
-        before = tree_state(self.root)
-        path = self.root / ".agents/skills/openspec-explore/SKILL.md"
-        path.write_text(path.read_text() + "x")
-        self.assertNotEqual(before, tree_state(self.root))
-        path.write_text(path.read_text()[:-1])
-        self.assertEqual(before, tree_state(self.root))
-        link = self.root / ".claude/skills/openspec-explore"
-        target = os.readlink(str(link))
-        link.unlink()
-        os.symlink(target + "/../" + Path(target).name, str(link))
-        self.assertNotEqual(before, tree_state(self.root))
-
-    def test_red_after_editing_a_generated_file(self):
-        self.need_cli()
-        path = self.root / ".agents/skills/openspec-explore/SKILL.md"
-        path.write_text(path.read_text() + "\nhand edit\n")
-        vs = self.run_rule()
-        self.assertEqual([".agents/skills/openspec-explore/SKILL.md"], [v.path for v in vs])
-        self.assertIn("differs from `openspec update` output", vs[0].message)
-        self.assertIn("make openspec", vs[0].message)
-
-    def test_red_after_adding_a_stale_command_file(self):
-        self.need_cli()
-        write(self.root, ".claude/commands/opsx/apply.md",
-              '---\nname: "OPSX: Apply"\ndescription: "Implement tasks from an OpenSpec change (Experimental)"\n---\n\nOld command.\n')
-        vs = self.run_rule()
-        self.assertEqual([".claude/commands/opsx/apply.md"], [v.path for v in vs])
-        self.assertIn("stale /opsx command", vs[0].message)
-        self.assertIn("make openspec", vs[0].message)
-
-    def test_red_after_replacing_a_link_by_a_real_directory(self):
-        self.need_cli()
-        link = self.root / ".claude/skills/openspec-explore"
-        self.assertTrue(link.is_symlink())
-        link.unlink()
-        write(self.root, ".claude/skills/openspec-explore/SKILL.md", "---\nname: openspec-explore\n---\n")
-        vs = self.run_rule()
-        self.assertEqual([".claude/skills/openspec-explore"], [v.path for v in vs])
-        self.assertIn("differs from `openspec update` output", vs[0].message)
-
-    def test_comparison_kinds(self):
-        """Compare against a fresh tree without running the CLI: edits, deletions, creations, links."""
-        fresh = Path(self.tmp) / "fresh"
-        shutil.copytree(str(self.root), str(fresh), symlinks=True)
-        self.assertEqual([], check._compare_generated(self.root, fresh))
-        write(self.root, ".claude/commands/opsx/apply.md", "stale\n")
-        write(self.root, ".agents/skills/custom/SKILL.md", "only in the root\n")
-        write(self.root, ".claude/skills/settings.local.json", "{}")
-        os.symlink("../../.agents/skills/a", str(fresh / ".claude/skills/new-link"))
-        os.symlink("../../.agents/skills/b", str(self.root / ".claude/skills/new-link"))
-        (fresh / ".agents/skills/openspec-explore/SKILL.md").unlink()
-        (self.root / ".agents/skills/unslop/SKILL.md").unlink()
-        write(fresh, ".agents/skills/unslop/SKILL.md", "created by the update\n")
-        vs = check._compare_generated(self.root, fresh)
-        self.assertEqual([".agents/skills/custom", ".agents/skills/openspec-explore/SKILL.md",
-                          ".agents/skills/unslop/SKILL.md", ".claude/commands", ".claude/skills/new-link"],
-                         sorted(v.path for v in vs))
-        by_path = {v.path: v.message for v in vs}
-        self.assertIn("deleted by", by_path[".agents/skills/custom"])
-        self.assertIn("deleted by", by_path[".claude/commands"])
-        self.assertIn("deleted by", by_path[".agents/skills/openspec-explore/SKILL.md"])
-        self.assertIn("differs from", by_path[".claude/skills/new-link"])
-        self.assertIn("created by", by_path[".agents/skills/unslop/SKILL.md"])
+    def test_same_major_and_not_older_satisfies(self):
+        for installed in ("2.1.1", "2.1.2", "2.2.0", "2.10.0", "2.1.1-beta.1"):
+            self.assertTrue(check.version_satisfies(installed, "2.1.1"), installed)
+        for installed in ("2.1.0", "2.0.9", "1.9.9", "3.0.0", "", None, "nonsense"):
+            self.assertFalse(check.version_satisfies(installed, "2.1.1"), installed)
 
 
 class OpenspecValidateTests(Base):
@@ -942,28 +792,30 @@ class OpenspecValidateTests(Base):
     def fake_run(self, code=0):
         return mock.Mock(return_value=mock.Mock(returncode=code, stdout="boom\n"))
 
-    def test_pinned_version_mismatch_is_a_skip_or_a_violation(self):
+    def test_older_or_other_major_cli_is_a_skip_or_a_violation(self):
         self.pin("9.9.9")
-        with mock.patch.object(check, "installed_openspec_version", return_value="1.13.0"), \
-                mock.patch.object(check.subprocess, "run", self.fake_run()) as run:
-            with self.assertRaises(check.Skip) as ctx:
-                self.rule("openspec-validate", require_tools=False)
-            self.assertIn("9.9.9", str(ctx.exception))
-            self.assertIn("1.13.0", str(ctx.exception))
-            self.assertIn("openspec/cli-version", str(ctx.exception))
-            vs = self.rule("openspec-validate", require_tools=True)
-            run.assert_not_called()
-        self.assertEqual(["openspec-validate"], [v.rule for v in vs])
-        self.assertIn("npm i -g @fission-ai/openspec@9.9.9", vs[0].message)
+        for installed in ("9.9.8", "10.0.0", "1.13.0"):
+            with mock.patch.object(check, "installed_openspec_version", return_value=installed), \
+                    mock.patch.object(check.subprocess, "run", self.fake_run()) as run:
+                with self.assertRaises(check.Skip) as ctx:
+                    self.rule("openspec-validate", require_tools=False)
+                self.assertIn("9.9.9 or a newer 9.x", str(ctx.exception))
+                self.assertIn(installed, str(ctx.exception))
+                self.assertIn("openspec/cli-version", str(ctx.exception))
+                vs = self.rule("openspec-validate", require_tools=True)
+                run.assert_not_called()
+            self.assertEqual(["openspec-validate"], [v.rule for v in vs])
+            self.assertIn("npm i -g @fission-ai/openspec@9.9.9", vs[0].message)
 
-    def test_pinned_version_match_runs_the_cli(self):
+    def test_same_or_newer_cli_of_the_same_major_runs(self):
         self.pin("9.9.9")
-        with mock.patch.object(check, "installed_openspec_version", return_value="9.9.9"), \
-                mock.patch.object(check.shutil, "which", return_value="/bin/openspec"), \
-                mock.patch.object(check.subprocess, "run", self.fake_run(1)) as run:
-            vs = self.rule("openspec-validate", require_tools=False)
-        run.assert_called_once()
-        self.assertViolation(vs, "openspec-validate", "openspec validate --all --strict")
+        for installed in ("9.9.9", "9.10.0"):
+            with mock.patch.object(check, "installed_openspec_version", return_value=installed), \
+                    mock.patch.object(check.shutil, "which", return_value="/bin/openspec"), \
+                    mock.patch.object(check.subprocess, "run", self.fake_run(1)) as run:
+                vs = self.rule("openspec-validate", require_tools=False)
+            run.assert_called_once()
+            self.assertViolation(vs, "openspec-validate", "openspec validate --all --strict")
 
     def test_pinned_version_missing_cli(self):
         self.pin("9.9.9")
@@ -1183,7 +1035,7 @@ class CliTests(Base):
         code, out, _ = self.run_main("--list")
         self.assertEqual(0, code)
         self.assertEqual([r.id for r in check.RULES], [l.split()[0] for l in out.splitlines()])
-        self.assertEqual(10, len(check.RULES))
+        self.assertEqual(9, len(check.RULES))
 
     def test_skip_is_reported_and_counted(self):
         with mock.patch.object(check.shutil, "which", return_value=None):
@@ -1193,7 +1045,7 @@ class CliTests(Base):
             self.assertTrue(out.endswith("check: ok (1 rules, 1 skipped)\n"))
             code, out, _ = self.run_main("--root", str(self.ws), "--only", "openspec-validate", "--require-tools")
         self.assertEqual(1, code)
-        self.assertIn("Convention: openspec/config.yaml", out)
+        self.assertIn("Convention: docs/agents/openspec.md", out)
 
     def test_openspec_version_flag(self):
         code, out, _ = self.run_main("--root", str(REPO), "--openspec-version")
@@ -1201,6 +1053,15 @@ class CliTests(Base):
         code, out, err = self.run_main("--root", str(self.ws), "--openspec-version")
         self.assertEqual((2, ""), (code, out))
         self.assertIn("cannot determine", err)
+
+    def test_openspec_ok_flag(self):
+        with mock.patch.object(check, "installed_openspec_version", return_value="99.0.0"):
+            code, out, err = self.run_main("--root", str(REPO), "--openspec-ok")
+        self.assertEqual((1, ""), (code, out))
+        self.assertIn("found 99.0.0", err)
+        pin = check.pinned_openspec_version(REPO)[0]
+        with mock.patch.object(check, "installed_openspec_version", return_value=pin):
+            self.assertEqual(0, self.run_main("--root", str(REPO), "--openspec-ok")[0])
 
 
 if __name__ == "__main__":

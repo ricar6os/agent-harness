@@ -10,7 +10,9 @@ artifacts:
       Observable behaviour only: no class names, libraries or implementation steps.
 
       - Reuse the capability paths listed by `openspec list --specs`. Name new ones after a durable behaviour (`order-cancellation`, not `add-cancel-button`).
-      - One behaviour per requirement, in one or two sentences. Add scenarios only for distinct edge cases, one line each.
+      - One behaviour per requirement, in one or two sentences with SHALL or MUST. Add scenarios only for distinct edge cases, one line each.
+      - Write the scenario keywords GIVEN, WHEN and THEN in capitals, as in the template: `openspec validate --strict` reads them.
+      - The Purpose of a new capability has at least 50 characters: a shorter one fails strict validation once the spec is archived.
       - MODIFIED copies the whole existing requirement, keeping every scenario.
     requires: []
 

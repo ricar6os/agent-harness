@@ -28,7 +28,7 @@ copy that keeps this repository's history, so harness updates arrive with a merg
 git fetch harness
 git checkout -b chore/harness-update origin/main
 git merge harness/main
-make openspec && make check && make test
+make check && make test
 ```
 
 Conflicts can only come from instance-owned files (below) or from harness files the meta
@@ -40,9 +40,9 @@ Open the result as a PR in the meta.
 | Harness-owned (kept identical across every meta) | Instance-owned |
 | ------------------------------------------------ | -------------- |
 | `scripts/`, `Makefile`, `tests/` | `repos.json` |
-| `.agents/skills/` (custom, vendored and generated) | `docs/conventions/` (workspace conventions no rule can check) |
+| `.agents/skills/` (custom and vendored) | `docs/conventions/` (workspace conventions no rule can check) |
 | `.claude/`, `.opencode/`, `.github/workflows/` | `openspec/changes/`, `openspec/specs/` |
-| `docs/agents/`, `openspec/schemas/`, `openspec/config.yaml`, `openspec/cli-profile.json` | |
+| `docs/agents/`, `openspec/schemas/`, `openspec/cli-version` | The `x-tracker` line and your own additions to the `context:` of `openspec/config.yaml` |
 | MCP config files (`.mcp.json`, `.codex/config.toml`, `opencode.json`) | `env/` |
 | Guardrail wiring (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/guard.js`) | |
 
@@ -69,14 +69,13 @@ scripts/repo-check.sh    run a repo's `check` command from the manifest inside i
 scripts/link-skills.sh   link each repo's skills into .claude/skills/ and .agents/skills/ (run by init.sh)
 scripts/check.py         deterministic convention checks (`make check`)
 scripts/guard.py         agent guardrails: decides each tool call (see "Guardrails")
-scripts/openspec-update.sh  regenerate the openspec-* skills with the pinned CLI version and profile
-tests/                   unit tests of the checker and the guardrails (`make test`)
+tests/                   tests of the checker, the guardrails, the scripts and the OpenSpec CLI contract (`make test`)
 .github/workflows/check.yml  runs the checks and the tests on every pull request
 repos/<name>/            org repos (git-ignored; each one is its own git repository)
 env/<name>/              local .env/secret files symlinked into repos/<name>/ by init.sh (git-ignored)
-openspec/                OpenSpec: schemas/spec-plan/ (our workflow), config.yaml, cli-version (pinned CLI version), cli-profile.json (pinned CLI profile), changes/ (in-flight work), specs/ (main specs)
-.agents/skills/          root-level skills — canonical location (Codex/ChatGPT + Claude Code)
-.claude/skills/          Claude Code skills: symlinks to .agents/skills/ for every skill (custom, vendored and generated)
+openspec/                OpenSpec: schemas/spec-plan/ (our workflow), config.yaml, cli-version (the CLI version CI installs), changes/ (in-flight work), specs/ (main specs)
+.agents/skills/          root-level skills, the canonical location (Codex/ChatGPT + Claude Code)
+.claude/skills/          Claude Code skills: symlinks to .agents/skills/ for every skill
 .mcp.json                project MCP servers (Linear)
 .claude/settings.json    Claude Code hook that runs scripts/guard.py
 .codex/hooks.json        Codex hook that runs scripts/guard.py
@@ -95,9 +94,8 @@ make sync PRODUCT=shop      # restrict to the repos of an OpenSpec product
 make status                  # status of each cloned repo
 make list                    # print the manifest
 make repo-check REPO=api     # run the check command that repos.json declares for a repo (one repo name, nothing after it)
-make openspec                # regenerate the openspec-* skills with the pinned CLI version and profile
 make check                   # check the workspace conventions (see "Checks")
-make test                    # run the tests of the checker and the guardrails
+make test                    # run the tests (checker, guardrails, scripts, OpenSpec CLI contract)
 ```
 
 The targets are thin wrappers around `scripts/`; call the scripts directly for extra flags:
@@ -142,7 +140,7 @@ worktree leaves a stale entry in the main clone, which the next sync prunes. Set
 `META_REPO_WORKTREES=0` to clone instead.
 
 Requirements: `git`, `jq`, `python3` (3.9 or newer, standard library only), SSH access to GitHub
-(`gh auth status`) and the `openspec` CLI at the pinned version (`npm i -g "@fission-ai/openspec@$(cat openspec/cli-version)"`) for the spec workflow.
+(`gh auth status`) and, for the spec workflow, the `openspec` CLI at the version in `openspec/cli-version` or a newer one of the same major (`npm i -g "@fission-ai/openspec@$(cat openspec/cli-version)"`).
 
 ## Checks
 
@@ -156,28 +154,19 @@ the place where the convention is written. Run `python3 scripts/check.py --list`
 | ---- | ---------------- | ---------- |
 | `manifest` | `repos.json` has only known keys, valid `products` slugs, and unique names and paths | [Manifest](#manifest-reposjson) |
 | `tracker` | `openspec/config.yaml` sets `x-tracker` to `linear`, `github` or `none` | [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md) |
-| `change-product` | when `repos.json` declares `products`, every change records one of them and its delta and main specs sit under it; without `products`, no change records one and specs sit at `<capability>/spec.md`; no Linear project is shared between changes | [`docs/agents/openspec.md`](docs/agents/openspec.md), "Products and Linear projects" |
+| `change-product` | when `repos.json` declares `products`, every change records one of them and its delta and main specs sit under it; without `products`, no change records one and specs sit at `<capability>/spec.md`; no Linear project is shared between changes | [`docs/agents/openspec.md`](docs/agents/openspec.md), "Products and trackers" |
 | `mcp-parity` | every MCP server is declared, with the same url, in `.mcp.json`, `.codex/config.toml` and `opencode.json` | [MCP servers](#mcp-servers) |
-| `skill-exposure` | each custom skill has valid frontmatter and is visible to Claude Code; no broken links; `skills-lock.json` matches | [`docs/agents/workspace-changes.md`](docs/agents/workspace-changes.md), "Custom skills" |
+| `skill-exposure` | each skill has valid frontmatter and is visible to Claude Code; none was written by the OpenSpec CLI; no broken links; `skills-lock.json` matches | [`docs/agents/workspace-changes.md`](docs/agents/workspace-changes.md), "Custom skills" |
 | `tracked-secrets` | git tracks no env file, nothing under `env/` except placeholders, nothing under the clones directory | `env/README.md` |
-| `generated-skills` | running `make openspec` on a clean copy changes nothing under `.agents/` and `.claude/`: no generated file is edited, missing or stale | [`docs/agents/workspace-changes.md`](docs/agents/workspace-changes.md), "Generated files" |
-| `openspec-validate` | `openspec validate --all --strict` passes, with the CLI at the pinned version when `openspec/cli-version` exists; a workspace without `openspec/` has nothing to validate | `openspec/config.yaml` |
+| `openspec-validate` | `openspec validate --all --strict` passes; a workspace without `openspec/` has nothing to validate | [`docs/agents/openspec.md`](docs/agents/openspec.md) |
 | `agents-map` | `AGENTS.md` exists and is at most 6000 bytes; every `docs/agents/*.md` is linked from it; every relative Markdown link in `AGENTS.md` and `docs/agents/*.md` resolves | [AGENTS.md is a map](#agentsmd-is-a-map) |
 | `guardrails` | `scripts/guard.py` is executable; `.claude/settings.json` and `.codex/hooks.json` have a `PreToolUse` hook on `Bash` that runs it with `--agent claude` / `--agent codex`; the OpenCode plugin's code (comments stripped) runs it with `--agent opencode` in a `tool.execute.before` hook | [Guardrails](#guardrails) |
 
-A rule skips, and says so, when it cannot run: the `openspec` CLI is missing or is not the
-pinned version (`generated-skills`, and `openspec-validate` when `openspec/cli-version` exists; without that file `openspec-validate` uses whatever CLI is installed), or the directory is not a git work tree, or (`mcp-parity`, on Python 3.9 and 3.10 only) `.codex/config.toml` uses TOML the built-in fallback parser does not implement (triple-quoted strings, `[[mcp_servers...]]` headers, escapes in a url or a name) and needs Python 3.11+. With `--require-tools`, a missing or
-wrong tool, or such a file, is a violation instead; CI uses it, so a skip never hides a failure there.
-
-The OpenSpec CLI version is pinned in `openspec/cli-version` (one version number, for example
-`2.1.1`), and `scripts/check.py --openspec-version` prints it; CI installs exactly that version.
-The profile the CLI generates with is pinned in `openspec/cli-profile.json`, and
-`skillsScope: project` in `openspec/config.yaml` keeps the generated skills in this repo so every
-clone and CI gets the same ones. `make openspec` applies them (through
-`scripts/openspec-update.sh`, which refuses to run with another CLI version and never touches
-your own CLI configuration), so every meta generates the same files. To upgrade OpenSpec, write
-the new version in `openspec/cli-version`, install that version, run `make openspec`, run
-`make check` and commit.
+A rule skips, and says so, when it cannot run: the `openspec` CLI is missing, older than
+`openspec/cli-version` or of another major version (`openspec-validate`), the directory is not a
+git work tree, or (`mcp-parity`, on Python 3.9 and 3.10 only) `.codex/config.toml` uses TOML the
+built-in fallback parser does not implement and needs Python 3.11+. With `--require-tools` those
+cases are violations instead; CI uses it, so a skip never hides a failure there.
 
 CI (`.github/workflows/check.yml`) runs `scripts/check.py --require-tools` and the tests on
 every pull request and on pushes to `main`.
@@ -188,8 +177,8 @@ Every agent loads `AGENTS.md` at the start of every session, so it holds only th
 hold in every session and a map saying which file to read for which task. It is capped at 6000
 bytes (rule `agents-map`). Detail lives in `docs/agents/`, one short file per topic, and each
 file is linked from `AGENTS.md` with a line saying when to read it. Relative links in these files
-must resolve. A rule stated in full where it is used (`openspec/config.yaml` for OpenSpec
-operations, a skill for its task) is pointed to, not copied.
+must resolve. A rule stated in full where it is used (the schema for what a change contains,
+a skill for its task) is pointed to, not copied.
 
 ### Adding a rule
 
@@ -257,15 +246,9 @@ runs (a script that echoes its `.env`, `docker inspect`, a server log). Those st
 then runs, and anything an agent does through another tool. This prevents mistakes; it is not a
 sandbox, and a determined agent or person can get around it.
 
-OpenCode plugin, verified with OpenCode 2.3.2 (macOS, a throwaway copy of this repo with no
-`node_modules`, model `opencode/deepseek-v4.1-flash-free`): the plugin loaded and blocked a
-`git push --force origin feat/x` on a feature branch, and the agent was told "force-push rewrites
-remote history: confirm with the user. Blocked: ...". The previous form, which imported `@opencode/plugin`, also
-loaded in that version, but the real package is `@opencode-ai/plugin`, so the import would fail on other
-versions; the plugin is now a plain `export default { id, setup }` object with no package import (only Node built-ins), and that form
-blocked the same call. OpenCode created nothing inside the project (no `.opencode/package.json`, `node_modules`,
-lock file or `.gitignore`), so nothing is ignored or committed for it. It only wrote its own state under
-`~/.local/share/opencode` and `~/.local/state/opencode`. Other OpenCode versions were not tried.
+The OpenCode plugin is a plain `export default { id, setup }` object that imports only Node
+built-ins, so a fresh clone needs no package install. It was verified with OpenCode 2.3.2 on
+macOS; other versions were not tried.
 
 The `guardrails` check keeps the wiring in place. Changes to `scripts/guard.py` come with rows in
 `tests/test_guard.py`: one for what it blocks and one for the look-alike it must still allow.
@@ -307,7 +290,7 @@ planned, so each part can change without the others:
 | ----- | ---- | ----- |
 | Core | Agent instructions as a map, guardrails, checks, MCP parity, secrets, PR and rule skills | `AGENTS.md`, `docs/agents/`, `scripts/`, `.agents/skills/` |
 | Topology | Where the code lives: one repo, this meta with `repos.json`, or an OpenSpec store (beta, not wired yet) | `repos.json`, `scripts/init.sh`, the `context:` of `openspec/config.yaml` |
-| Method | How a change is specified, planned and implemented | `openspec/schemas/spec-plan/`, the `rules:` of `openspec/config.yaml` |
+| Method | How a change is specified, planned and implemented | `openspec/schemas/spec-plan/`, the `openspec-*` skills |
 
 The method touches the topology in one place: a plan names repos, and the workspace says how a
 name becomes a checkout and a verification command. Here that is `repos.json` and
@@ -339,6 +322,17 @@ review the phase. Run apply again for the next phase.
 ```
 
 `openspec/specs/` holds the main specs, updated when a change is archived.
+
+### How much OpenSpec
+
+The workspace depends on OpenSpec for its file layout (`openspec/specs/`, `openspec/changes/`, delta
+specs) and for six CLI commands: `new change`, `status`, `instructions`, `list`, `validate` and
+`archive`. The four `openspec-*` workflow skills are our own, short and written for this schema;
+the CLI's generated skills are not installed, because they are written for the default schema
+and contradict ours (they list `proposal.md`, `design.md` and `tasks.md`, and their apply runs
+every task instead of one phase). `tests/test_openspec.py` runs each command against the schema
+and its templates, so a CLI upgrade that breaks one fails `make test`.
+[`docs/agents/openspec.md`](docs/agents/openspec.md) lists what each command is used for.
 
 ### Products
 
@@ -377,8 +371,8 @@ runs after `plan.md` is written or edited, and before archive. It writes the iss
 the end of the phase heading (`### Phase 1: Durable order ids [ABC-123]`) and records the
 container in `.openspec.yaml` (`x-linear-project` or `x-github-issue`). When apply starts a
 phase, the agent marks its issue started (In Progress in Linear, assigned to you in GitHub);
-that is the only progress it writes, and you move or close issues from there. The rules in
-`openspec/config.yaml` are the same for every tracker, so switching is that one line; `make
+that is the only progress it writes, and you move or close issues from there. The skills read
+`x-tracker` and behave the same for every tracker, so switching is that one line; `make
 check` (rule `tracker`) accepts only the three values. Details per tracker are in
 [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md). Linear access uses the
 `linear-server` MCP server (see "MCP servers" below); GitHub uses `gh`.
@@ -404,20 +398,17 @@ meta; do not fork the script); one no rule can check goes to `docs/conventions/`
 
 ## Skills
 
-- **Root skills** live in `.agents/skills/` (canonical). Three kinds:
-  - _Custom_ (e.g. `sync-repos`): `SKILL.md` + `agents/openai.yaml`. Exposed to Claude Code with a
-    relative symlink: `mkdir -p .claude/skills/<name> && ln -s ../../../.agents/skills/<name>/SKILL.md .claude/skills/<name>/SKILL.md`.
-    `create-pull-request` (adapted from CodelyTV/agent-harness, MIT) writes the title and body of a PR
-    with evidence, deploy steps, rollback and links between the PRs of a multi-repo change.
-    `openspec-create-spec-from-code` (adapted from CodelyTV/agent-harness, MIT) writes the baseline main specs of a
-    product's existing behaviour from the code of its repos, so the first change over it can modify or remove
-    requirements. Only the user starts it.
+- **Root skills** live in `.agents/skills/` (canonical), each with a symlink in `.claude/skills/`. Two kinds:
+  - _Custom_: written here. `openspec-explore`, `openspec-propose`, `openspec-apply-change` and
+    `openspec-archive-change` are the workflow; `openspec-tracker-sync` mirrors phases to the
+    tracker; `sync-repos` clones and updates the repos; `unslop` edits writing.
+    `create-pull-request` and `openspec-create-spec-from-code` are adapted from
+    CodelyTV/agent-harness (MIT): the first writes the title and body of a PR with evidence,
+    deploy steps, rollback and links between the PRs of a phase; the second writes the baseline
+    main specs of existing behaviour from the code, and only the user starts it.
   - _Vendored_ (`create-rule`, `deterministify` from
-    [CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness)): selected upstream
-    skills pinned in `skills-lock.json` and exposed through directory symlinks in `.claude/skills/`.
-  - _Generated_ (`openspec-*`): written by `make openspec` into `.agents/skills/`, with a
-    directory symlink for each in `.claude/skills/`. The CLI version and profile are pinned in
-    `openspec/cli-version` and `openspec/cli-profile.json`. Do not edit by hand; re-run `make openspec`.
+    [CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness)): upstream skills pinned
+    in `skills-lock.json`, never edited here.
 - **Per-repo skills**: `repos/<name>/.agents/skills/` (or `.claude/skills/`), owned by each
   repository. Neither tool offers them from the meta root on its own: Claude Code loads skills
   below the start directory only once it touches a file there (and in our tests never from the

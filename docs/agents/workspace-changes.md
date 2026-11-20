@@ -8,7 +8,7 @@ manifest, OpenSpec files, instructions. For product code see [working-on-a-repo.
 Yes, allowed:
 
 - **Cloned repos (`repos/<name>`)**: edit code, run tests, branch, commit, push, open PRs per repo.
-- **This meta repo**: add or edit custom skills in `.agents/skills/`, create OpenSpec changes
+- **This meta repo**: add or edit skills in `.agents/skills/`, create OpenSpec changes
   under `openspec/changes/`, improve `scripts/`, update `AGENTS.md` and `README.md`, add repos to
   `repos.json`.
 
@@ -29,7 +29,10 @@ to clone it, then `make check`.
 
 ## Custom skills
 
-After adding a custom skill, expose it to Claude Code:
+Skills live in `.agents/skills/<name>/`: a `SKILL.md` whose frontmatter `name` equals the
+directory, and an `agents/openai.yaml` with the name and prompt Codex shows for it. A skill
+vendored from another repository is pinned in `skills-lock.json`; change it upstream, not here.
+After adding a skill, expose it to Claude Code:
 
 - A skill with only a `SKILL.md`:
   `mkdir -p .claude/skills/<name> && ln -s ../../../.agents/skills/<name>/SKILL.md .claude/skills/<name>/SKILL.md`
@@ -37,20 +40,23 @@ After adding a custom skill, expose it to Claude Code:
   directory as the `.claude/skills/<name>` path, so relative references must exist there:
   `ln -s ../../.agents/skills/<name> .claude/skills/<name>`
 
-## Generated files
+## The OpenSpec skills and schema
 
-Never hand-edit the generated `openspec-*` skills; run `make openspec`.
+The `openspec-*` skills and `openspec/schemas/spec-plan/` are this workspace's own, and
+harness-owned: change them in the harness repository. Keep both agnostic of where repos live;
+that goes in the `context:` of `openspec/config.yaml`. After editing the schema run
+`openspec schema validate spec-plan` and `make test`: `tests/test_openspec.py` writes a change
+from the templates and takes it through validation and archive.
 
-## The OpenSpec schema
-
-`openspec/schemas/spec-plan/` is harness-owned: change it in the harness repository, keep it agnostic of
-where repos live (that goes in the `context:` of `openspec/config.yaml`), and run
-`openspec schema validate spec-plan` after editing it.
+Run `openspec init` or `openspec update` nowhere here: they write the CLI's generic skills over
+ours, and the `skill-exposure` rule reports a skill the CLI wrote.
 
 ## Upgrading OpenSpec
 
-To upgrade OpenSpec: write the new version in `openspec/cli-version`, install that version, run
-`make openspec`, run `make check`, commit.
+`openspec/cli-version` holds the version CI installs. Locally, that version or a newer one of
+the same major runs the checks. To upgrade: write the new version in the file, install it, and
+run `make check` and `make test`. `tests/test_openspec.py` fails when a command the skills use
+changed; adapt the skill that uses it ([openspec.md](openspec.md) lists them).
 
 ## Local files
 

@@ -1,6 +1,6 @@
 ## Purpose
 
-<!-- New capabilities only: what this capability is for, in one or two sentences -->
+<!-- New capabilities only: what this capability is for, in one or two sentences (at least 50 characters) -->
 
 ## ADDED Requirements
 
@@ -10,4 +10,4 @@
 The system SHALL <!-- one behaviour, in one or two sentences -->.
 
 #### Scenario: <!-- scenario name -->
-- Given <!-- context -->, when <!-- action -->, then <!-- outcome -->
+- GIVEN <!-- context -->, WHEN <!-- action -->, THEN <!-- outcome -->
