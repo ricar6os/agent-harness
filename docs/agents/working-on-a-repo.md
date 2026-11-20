@@ -38,8 +38,13 @@ Applies to every commit and PR, inside `repos/<name>` and in this meta repo.
 - Commit messages and PR titles follow [Conventional Commits](https://www.conventionalcommits.org/):
   `<type>(<scope>): <description>`, with `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`,
   `build` or `perf`; scope optional.
-- PR title only: with an assigned task (a Linear issue id, for example `ABC-123`), the id is the
-  **first word of the description**: `feat(login): ABC-123 add magic-link sign-in`. No task
-  assigned: a plain description, `fix(api): handle empty payload`. Commits never carry the id.
+- How a PR names its phase's issue depends on `x-tracker` in `openspec/config.yaml`:
+  - `linear`: the issue id is the **first word of the title's description**:
+    `feat(login): ABC-123 add magic-link sign-in`.
+  - `github`: no id in the title; the body says `Part of <owner>/<repo>#13` (never `Closes`, a
+    phase can have PRs in several repos).
+  - `none`, or no issue: a plain title, `fix(api): handle empty payload`.
+
+  Commits never carry an issue reference.
 - The PR body is a **briefing** for a teammate who has not opened the code. Build title and body
   with the `create-pull-request` skill.

@@ -20,13 +20,13 @@ A reviewer must understand, verify and undo the PR without opening the code. A c
 
 ## 2. Title
 
-Conventional Commits as in `docs/agents/working-on-a-repo.md` "Commits & PRs": `type(scope): description`. When the phase has a Linear issue id (at the end of its heading in the change's `plan.md`, like `[ABC-123]`), it is the first word of the description: `feat(login): ABC-123 add magic-link sign-in`. If the repo restricts scopes (a script, config or CI check validates titles), use one of them.
+Conventional Commits as in `docs/agents/working-on-a-repo.md` "Commits & PRs": `type(scope): description`. The phase's issue reference sits at the end of its heading in the change's `plan.md`. With `x-tracker: linear` (in `openspec/config.yaml`), its id is the first word of the description: `feat(login): ABC-123 add magic-link sign-in`. With `github` or `none`, the title carries no reference. If the repo restricts scopes (a script, config or CI check validates titles), use one of them.
 
 ## 3. Body
 
 `gh pr create --body` ignores templates. Shell variables do not survive between tool calls, so run `mktemp -d` once, note the absolute path it prints, and write that literal path in every later command; `<tmp>` below stands for it. Copy the template to `<tmp>/pr-body.md`, fill it, delete the sections that do not apply and every HTML comment, and pass it with `--body-file`. Remove the directory when done (`rm -r <tmp>`).
 
-- **Why**: the problem, not the solution, in product vocabulary. Link the OpenSpec change and the Linear issue. The change link is the URL of `openspec/changes/<change>/` in the workspace repository on its default branch (`gh repo view --json url,defaultBranchRef`, run in the workspace root), or on the change's branch while it is unmerged.
+- **Why**: the problem, not the solution, in product vocabulary. Link the OpenSpec change and, when there is one, the phase's issue: the Linear issue, or `Part of <owner>/<repo>#13` for GitHub (never `Closes`). The change link is the URL of `openspec/changes/<change>/` in the workspace repository on its default branch (`gh repo view --json url,defaultBranchRef`, run in the workspace root), or on the change's branch while it is unmerged.
 - **What changes**: 2-5 bullets: what changes for users or operators, and what a reviewer must know (decisions, trade-offs, non-obvious effects). Never the commit list.
 - **Related PRs** (only for a change that spans repos): the PRs of this PR's phase, in the order of that phase's `**Repos:**` line in the change's `plan.md`, each with its link or "not opened yet"; mark this one. One line names the earlier phases as already shipped or still open. A repo that is only touched conditionally is listed with its condition. One sentence: what must be merged and deployed before this PR, and what waits for it. When the phase has no such line, use provider before consumer and say in the PR that the order was inferred.
 - **Evidence**: proves the change that "Why" describes, with the same input before (base branch) and after. Pick by kind of change:

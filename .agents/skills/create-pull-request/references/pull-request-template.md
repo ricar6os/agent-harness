@@ -1,6 +1,6 @@
 ## Why
 
-<!-- The problem, not the solution, in product vocabulary, 1-3 sentences. Link the OpenSpec change and the Linear issue. -->
+<!-- The problem, not the solution, in product vocabulary, 1-3 sentences. Link the OpenSpec change and the phase's issue, if any (GitHub: `Part of owner/repo#13`). -->
 
 ## What changes
 

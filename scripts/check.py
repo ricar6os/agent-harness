@@ -276,7 +276,7 @@ def relpath(root, path):
 
 
 @rule("change-product", "a change has a known product exactly when repos.json declares products; spec paths and Linear project ids agree",
-      'docs/agents/openspec.md, section "Products and Linear projects"')
+      'docs/agents/openspec.md, section "Products and trackers"')
 def check_change_product(root):
     out = []
     root = Path(root)
@@ -361,7 +361,34 @@ def check_change_product(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 3. mcp-parity
+# 3. tracker
+# ---------------------------------------------------------------------------------------------
+
+TRACKERS = ("linear", "github", "none")
+TRACKER_RE = re.compile(r"^x-tracker:[ \t]*(.*?)[ \t]*(?:#.*)?$", re.M)
+
+
+@rule("tracker", "openspec/config.yaml sets x-tracker to linear, github or none",
+      "docs/agents/issue-tracker.md")
+def check_tracker(root):
+    rel = "openspec/config.yaml"
+    text = read_text(Path(root) / rel)
+    if text is None:
+        return []
+    found = TRACKER_RE.search(text)
+    if not found:
+        return [Violation("tracker", rel, None,
+                          "no top-level `x-tracker:`. Add `x-tracker: none` (or linear, github) under `schema:`.")]
+    value = found.group(1).strip("'\"")
+    if value not in TRACKERS:
+        line = text[:found.start()].count("\n") + 1
+        return [Violation("tracker", rel, line,
+                          '`x-tracker: %s` is not a tracker. Use one of: %s.' % (value, ", ".join(TRACKERS)))]
+    return []
+
+
+# ---------------------------------------------------------------------------------------------
+# 4. mcp-parity
 # ---------------------------------------------------------------------------------------------
 
 MCP_FILES = (".mcp.json", ".codex/config.toml", "opencode.json")
@@ -603,7 +630,7 @@ def check_mcp_parity(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 4. skill-exposure
+# 5. skill-exposure
 # ---------------------------------------------------------------------------------------------
 
 def frontmatter(text):
@@ -707,7 +734,7 @@ def check_skill_exposure(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 5. tracked-secrets
+# 6. tracked-secrets
 # ---------------------------------------------------------------------------------------------
 
 def git_tracked(root):
@@ -758,7 +785,7 @@ def check_tracked_secrets(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 6. generated-skills
+# 7. generated-skills
 # ---------------------------------------------------------------------------------------------
 
 PIN_RE = re.compile(r"^\d+\.\d+\.\d+$")
@@ -945,7 +972,7 @@ def check_generated_skills(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 7. openspec-validate
+# 8. openspec-validate
 # ---------------------------------------------------------------------------------------------
 
 def require_pinned_cli(rule_id, root, require_tools):
@@ -992,7 +1019,7 @@ def check_openspec_validate(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 8. guardrails
+# 9. guardrails
 # ---------------------------------------------------------------------------------------------
 
 GUARD_SCRIPT = "scripts/guard.py"
@@ -1107,7 +1134,7 @@ def check_guardrails(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 9. agents-map
+# 10. agents-map
 # ---------------------------------------------------------------------------------------------
 
 AGENTS_MAP_LIMIT = 6000

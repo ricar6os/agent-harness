@@ -20,7 +20,7 @@ copy that keeps this repository's history, so harness updates arrive with a merg
 
 3. On a branch, edit `repos.json`: set `org`, list the repos and, if you use them, their `products`.
 4. `make doctor && make sync && make check`, then open the meta's first PR.
-5. Without Linear, delete the `[linear]` lines of `openspec/config.yaml`, the `openspec-linear-sync` skill and `docs/agents/issue-tracker.md`. With it, the team is resolved with the user at the first sync.
+5. Pick the issue tracker with `x-tracker` at the top of `openspec/config.yaml`: `linear`, `github` or `none` (see "Issue tracker" below). With Linear, the team is resolved with the user at the first sync.
 
 ## Bring harness updates into a meta
 
@@ -32,7 +32,7 @@ make openspec && make check && make test
 ```
 
 Conflicts can only come from instance-owned files (below) or from harness files the meta
-changed on purpose, such as the Linear adapter removed in step 5: keep the meta's side for those.
+changed on purpose, such as the `x-tracker` line of step 5: keep the meta's side for those.
 Open the result as a PR in the meta.
 
 ## Harness files and your files
@@ -155,6 +155,7 @@ the place where the convention is written. Run `python3 scripts/check.py --list`
 | Rule | What it enforces | Convention |
 | ---- | ---------------- | ---------- |
 | `manifest` | `repos.json` has only known keys, valid `products` slugs, and unique names and paths | [Manifest](#manifest-reposjson) |
+| `tracker` | `openspec/config.yaml` sets `x-tracker` to `linear`, `github` or `none` | [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md) |
 | `change-product` | when `repos.json` declares `products`, every change records one of them and its delta and main specs sit under it; without `products`, no change records one and specs sit at `<capability>/spec.md`; no Linear project is shared between changes | [`docs/agents/openspec.md`](docs/agents/openspec.md), "Products and Linear projects" |
 | `mcp-parity` | every MCP server is declared, with the same url, in `.mcp.json`, `.codex/config.toml` and `opencode.json` | [MCP servers](#mcp-servers) |
 | `skill-exposure` | each custom skill has valid frontmatter and is visible to Claude Code; no broken links; `skills-lock.json` matches | [`docs/agents/workspace-changes.md`](docs/agents/workspace-changes.md), "Custom skills" |
@@ -357,30 +358,30 @@ first, naming the capability (and the product, when there are products). Only yo
 writes main specs. It reads the code and tests of the repos, keeps only intended and verified
 behaviour, asks about ambiguous cases in one round, and leaves the specs uncommitted for review.
 
-### Linear (optional adapter)
+### Issue tracker (optional)
 
-The [`openspec-linear-sync` skill](.agents/skills/openspec-linear-sync/SKILL.md) runs after
-`plan.md` is written or edited, and before archive:
-
-```text
-Change durable-order-identity  → its own Linear project (label Product: Shop, when it has a product)
-├── Phase 1: Durable order ids → issue ABC-123
-└── Phase 2: Merge duplicates  → issue ABC-124
-```
+One line at the top of `openspec/config.yaml` picks where phases are tracked:
 
 ```yaml
-x-linear-project:
-  id: <actual Linear project UUID>
-  url: <actual Linear project URL>
-x-linear-sync-version: 3
+x-tracker: linear   # or github, or none
 ```
 
-The issue id is written at the end of the phase heading (`### Phase 1: Durable order ids [ABC-123]`)
-and goes in the PR title of every repo of that phase. When apply starts a phase, the agent moves
-its issue to In Progress if it has not started; that is the only status it writes, and you move
-the cards from there. The hooks are the lines marked `[linear]` in `openspec/config.yaml`: delete
-them, the skill and `docs/agents/issue-tracker.md` to work without Linear. Linear access uses the
-`linear-server` MCP server (see "MCP servers" below).
+| `x-tracker` | Change | Phase | PR names its phase |
+| --- | --- | --- | --- |
+| `linear` | its own Linear project (label `Product: <slug>` when it has a product) | an issue, `[ABC-123]` | id in the title: `feat(x): ABC-123 add y` |
+| `github` | a parent issue in this workspace repo | a sub-issue, `[#13]` | `Part of <owner>/<repo>#13` in the body |
+| `none` | nothing | the checkboxes of `plan.md` | nothing |
+
+With a tracker, the [`openspec-tracker-sync` skill](.agents/skills/openspec-tracker-sync/SKILL.md)
+runs after `plan.md` is written or edited, and before archive. It writes the issue reference at
+the end of the phase heading (`### Phase 1: Durable order ids [ABC-123]`) and records the
+container in `.openspec.yaml` (`x-linear-project` or `x-github-issue`). When apply starts a
+phase, the agent marks its issue started (In Progress in Linear, assigned to you in GitHub);
+that is the only progress it writes, and you move or close issues from there. The rules in
+`openspec/config.yaml` are the same for every tracker, so switching is that one line; `make
+check` (rule `tracker`) accepts only the three values. Details per tracker are in
+[`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md). Linear access uses the
+`linear-server` MCP server (see "MCP servers" below); GitHub uses `gh`.
 
 ### Convention skills
 

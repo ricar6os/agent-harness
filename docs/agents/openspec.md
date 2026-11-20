@@ -13,16 +13,17 @@ apply behaviour: one phase per run, verified, one commit per repo, then stop.
 | Rule | Written in full in |
 | ---- | ------------------ |
 | What specs and `plan.md` contain, phases, `**Repos:**` lines, contracts, tests, apply | `openspec/schemas/spec-plan/schema.yaml` and its templates |
-| How a repo named in a plan is found, products, Linear hooks | `openspec/config.yaml`, which the CLI injects into every operation |
-| Linear conventions | [issue-tracker.md](issue-tracker.md) |
-| Sync procedure and the one status the agent writes | skill `openspec-linear-sync` |
+| How a repo named in a plan is found, products, the tracker (`x-tracker`) and its hooks | `openspec/config.yaml`, which the CLI injects into every operation |
+| Tracker conventions: Linear, GitHub or none | [issue-tracker.md](issue-tracker.md) |
+| Sync procedure and the one progress write the agent makes | skill `openspec-tracker-sync` |
 | Branches, PR titles, one PR per repo and phase | [working-on-a-repo.md](working-on-a-repo.md) |
 
-## Products and Linear projects
+## Products and trackers
 
 Products are optional: a change records `x-product` only when `repos.json` declares `products`,
 and its spec paths then start with that slug. The `change-product` rule of `make check`
-enforces both cases. Each change has its own Linear project, recorded as `x-linear-project`.
+enforces both cases. With a tracker, each change has its own container in it, recorded in
+`.openspec.yaml` (`x-linear-project` or `x-github-issue`); with `x-tracker: none`, nothing is recorded.
 The keys of `.openspec.yaml` carry the `x-` prefix because OpenSpec 2 keeps only those without
 a warning.
 

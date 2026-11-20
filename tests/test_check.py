@@ -75,6 +75,7 @@ def make_workspace(parent):
     write(root, "openspec/changes/add-x/specs/shop/orders/spec.md", "## ADDED Requirements\n")
     write(root, "openspec/changes/add-x/plan.md", "# Plan\n")
     write(root, "openspec/specs/shop/orders/spec.md", "# orders\n")
+    write(root, "openspec/config.yaml", "schema: spec-plan\nx-tracker: linear\n")
     write(root, "env/README.md", "env\n")
     git(root, "init", "-q")
     git(root, "add", "-A")
@@ -368,6 +369,34 @@ class ChangeProductTests(Base):
     def test_yaml_parser(self):
         parsed = check.parse_simple_yaml("a: 'x'\nb: y # c\nn:\n  id: \"q\"\n  url: https://h/p\n")
         self.assertEqual({"a": "x", "b": "y", "n": {"id": "q", "url": "https://h/p"}}, parsed)
+
+
+class TrackerTests(Base):
+    def test_green(self):
+        self.assertClean(self.rule("tracker"))
+
+    def test_each_tracker_is_valid(self):
+        for value in ("linear", "github", "none", "'none'  # comment"):
+            write(self.ws, "openspec/config.yaml", "schema: spec-plan\nx-tracker: %s\n" % value)
+            self.assertClean(self.rule("tracker"))
+
+    def test_missing(self):
+        write(self.ws, "openspec/config.yaml", "schema: spec-plan\n")
+        self.assertViolation(self.rule("tracker"), "tracker", "no top-level `x-tracker:`")
+
+    def test_unknown(self):
+        write(self.ws, "openspec/config.yaml", "schema: spec-plan\nx-tracker: jira\n")
+        vs = self.rule("tracker")
+        self.assertViolation(vs, "tracker", "`x-tracker: jira` is not a tracker")
+        self.assertEqual(2, vs[0].line)
+
+    def test_indented_key_is_not_top_level(self):
+        write(self.ws, "openspec/config.yaml", "schema: spec-plan\nrules:\n  x-tracker: linear\n")
+        self.assertViolation(self.rule("tracker"), "tracker", "no top-level")
+
+    def test_no_openspec_config(self):
+        (self.ws / "openspec/config.yaml").unlink()
+        self.assertClean(self.rule("tracker"))
 
 
 class McpParityTests(Base):
@@ -769,7 +798,7 @@ class GeneratedSkillsTests(unittest.TestCase):
     def test_generated_skills_are_found_by_their_author(self):
         found = check.generated_skill_files(self.root)
         self.assertIn(".agents/skills/openspec-explore/SKILL.md", found)
-        self.assertNotIn(".agents/skills/openspec-linear-sync/SKILL.md", found)
+        self.assertNotIn(".agents/skills/openspec-tracker-sync/SKILL.md", found)
         self.assertNotIn(".agents/skills/unslop/SKILL.md", found)
 
     def test_missing_cli_version_is_a_violation(self):
@@ -1154,7 +1183,7 @@ class CliTests(Base):
         code, out, _ = self.run_main("--list")
         self.assertEqual(0, code)
         self.assertEqual([r.id for r in check.RULES], [l.split()[0] for l in out.splitlines()])
-        self.assertEqual(9, len(check.RULES))
+        self.assertEqual(10, len(check.RULES))
 
     def test_skip_is_reported_and_counted(self):
         with mock.patch.object(check.shutil, "which", return_value=None):

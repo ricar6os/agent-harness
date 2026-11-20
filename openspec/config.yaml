@@ -1,5 +1,8 @@
 schema: spec-plan
 
+# Issue tracker: linear, github or none. With none, plan.md checkboxes are the only tracking.
+x-tracker: linear
+
 # The generated skills are versioned in this repo so every clone and CI gets the same ones.
 skillsScope: project
 
@@ -10,24 +13,23 @@ context: |
   verification command as docs/agents/working-on-a-repo.md says (`make repo-check REPO=<name>`).
   Products are optional. When repos.json declares `products`, every change records exactly one
   as `x-product: <slug>` in .openspec.yaml: the user's selection, else the recorded one; if
-  neither, list the products from repos.json and ask. Never infer it from code or a Linear
+  neither, list the products from repos.json and ask. Never infer it from code or a tracker
   project name, and announce it. Spec paths then start with the slug
   (`specs/<slug>/<capability>/spec.md`, `openspec/specs/<slug>/<capability>/`), and the change
   touches only that product's repos plus shared ones (entries without `products`). Split work
   spanning products into separate changes. Without `products` in repos.json, changes carry no
   x-product and spec paths start with the capability.
 
-# Linear adapter. Each change is one Linear project, recorded as `x-linear-project: {id, url}`
-# in .openspec.yaml; each phase of plan.md is one issue. To work without Linear, delete the
-# lines below marked [linear] and the openspec-linear-sync skill.
+# The tracker rules below apply only when x-tracker (top of this file) is not none; they never
+# change between trackers, so switching tracker is that one line.
 rules:
   plan:
-    - "[linear] After writing or editing plan.md, run openspec-linear-sync. It keeps one issue per phase and writes its id at the end of the phase heading."
+    - "Unless `x-tracker` at the top of openspec/config.yaml is none, run openspec-tracker-sync after writing or editing plan.md. It keeps one issue per phase and writes its reference at the end of the phase heading."
 
 operations:
   apply:
     guidance:
-      - "[linear] When starting a phase whose heading has an issue id, move that issue to In Progress if it has not started. That is the only Linear status the agent writes."
+      - "Unless `x-tracker` in openspec/config.yaml is none: when starting a phase whose heading has an issue reference, mark that issue started as the State section of openspec-tracker-sync says. That is the only tracker write apply makes."
   archive:
     guidance:
-      - "[linear] Before archiving, run openspec-linear-sync and report every phase whose issue is not Done, leaving its status unchanged; the user decides whether to archive anyway."
+      - "Unless `x-tracker` in openspec/config.yaml is none: before archiving, run openspec-tracker-sync and report every phase whose issue is not finished, leaving it unchanged; the user decides whether to archive anyway."

@@ -33,10 +33,10 @@ Repository-specific instructions override organization defaults. Prefer a repo's
 
 ## Always
 
-- OpenSpec: a change has one Linear project (`x-linear-project`) and, when `repos.json` declares `products`, one product (`x-product`). Resolve and announce the product before any OpenSpec operation; never infer it.
+- OpenSpec: when `repos.json` declares `products`, a change has one product (`x-product`). Resolve and announce the product before any OpenSpec operation; never infer it.
 - Commits and PR titles: Conventional Commits, `type(scope): description`; PR title with a task id: `feat(x): ABC-123 add y`; commits never carry the id.
 - A change spanning several repos starts as an OpenSpec change (`/openspec-propose`): each phase of its `plan.md` names its repos in deployment order; apply implements one phase per run; one PR per repo and phase.
-- Issues live in Linear (`linear-server` MCP); GitHub holds code and PRs only.
+- Issues live in the tracker set by `x-tracker` in `openspec/config.yaml`: `linear`, `github` or `none` (only `plan.md`). Never use another one.
 
 ## Map
 
@@ -46,8 +46,8 @@ Read only what the task needs.
 | -------- | ---- |
 | Edit, commit or open a PR in `repos/<name>` or in this repo | [working-on-a-repo](docs/agents/working-on-a-repo.md); skill `create-pull-request` for title and body |
 | Change this repo: skills, scripts, manifest, instructions; add a repo to the manifest; upgrade the OpenSpec CLI | [workspace-changes](docs/agents/workspace-changes.md) |
-| Propose, apply or archive an OpenSpec change | [openspec](docs/agents/openspec.md); skill `openspec-linear-sync` after `plan.md` changes |
+| Propose, apply or archive an OpenSpec change | [openspec](docs/agents/openspec.md); skill `openspec-tracker-sync` after `plan.md` changes |
 | Write baseline specs from code | skill `openspec-create-spec-from-code` (user-invoked) |
-| Read or write issues (Linear, never GitHub Issues) | [issue-tracker](docs/agents/issue-tracker.md) |
+| Read or write issues | [issue-tracker](docs/agents/issue-tracker.md) |
 | Turn a correction into a rule | [conventions](docs/agents/conventions.md); skill `create-rule` (in a repo) |
 | Clone or update repos | skill `sync-repos` |

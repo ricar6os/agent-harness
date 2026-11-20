@@ -1,0 +1,6 @@
+interface:
+  display_name: "OpenSpec tracker sync"
+  short_description: "Sync a change to Linear or GitHub, one issue per phase"
+  default_prompt: "Use $openspec-tracker-sync to sync the active change to the issue tracker set in openspec/config.yaml, with one issue per phase of plan.md."
+policy:
+  allow_implicit_invocation: true
