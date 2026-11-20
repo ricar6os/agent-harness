@@ -19,7 +19,7 @@ from pathlib import Path
 
 try:
     import tomllib  # Python 3.11+
-except ImportError:  # the line parser below covers older Pythons
+except ImportError:  # the mcp-parity rule skips on older Pythons
     tomllib = None
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
@@ -382,184 +382,13 @@ def check_tracker(root):
 MCP_FILES = (".mcp.json", ".codex/config.toml", "opencode.json")
 
 
-def split_toml_key(header):
-    parts, buf, quote = [], "", None
-    for ch in header:
-        if quote:
-            if ch == quote:
-                quote = None
-            else:
-                buf += ch
-        elif ch in ("'", '"'):
-            quote = ch
-        elif ch == ".":
-            parts.append(buf.strip())
-            buf = ""
-        else:
-            buf += ch
-    parts.append(buf.strip())
-    return parts
-
-
-class UnsupportedToml(Exception):
-    """The fallback TOML parser meets a construct it does not implement: only Python 3.11+ can parse this file."""
-
-
-class _Escaped(str):
-    """A basic string that contains a backslash: the fallback parser keeps its raw text and cannot decode it."""
-
-
-BARE_KEY = r"[A-Za-z0-9_-]+"
-_KEY_PART = r"""(?:%s|"[^"]*"|'[^']*')""" % BARE_KEY
-KEY_PATH = r"(%s(?:\s*\.\s*%s)*)" % (_KEY_PART, _KEY_PART)
-KEY_RE = re.compile(r"^\s*" + KEY_PATH + r"\s*=\s*(.*)$")
-INLINE_KEY_RE = re.compile(r"\s*" + KEY_PATH + r"\s*=")
-HEADER_RE = re.compile(r"^\s*\[([^\[\]]+)\]\s*(#.*)?$")
-
-
-def _toml_scalar(text, i):
-    """(string or None, index after it) for the single-line value at text[i]: strings are returned, the
-    rest is skipped up to a top-level comma or closing brace."""
-    if text[i:i + 1] in ('"', "'"):
-        quote, j = text[i], i + 1
-        while j < len(text) and text[j] != quote:
-            j += 2 if quote == '"' and text[j] == "\\" else 1
-        raw = text[i + 1:j]
-        return (_Escaped(raw) if quote == '"' and "\\" in raw else raw), j + 1
-    depth, j = 0, i
-    while j < len(text):
-        ch = text[j]
-        if ch in "\"'":
-            j = _toml_scalar(text, j)[1]
-            continue
-        if ch in "[{":
-            depth += 1
-        elif ch in "]}" and depth == 0:
-            break
-        elif ch in "]}":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            break
-        elif ch == "#" and depth == 0:
-            break
-        j += 1
-    return None, j
-
-
-def _toml_value(text, i):
-    """(value, next index): an inline table becomes a dict, a string a str, anything else None."""
-    while text[i:i + 1] in (" ", "\t"):
-        i += 1
-    if text[i:i + 1] != "{":
-        return _toml_scalar(text, i)
-    table, i = {}, i + 1
-    while i < len(text):
-        while text[i:i + 1] in (" ", "\t", ","):
-            i += 1
-        if text[i:i + 1] in ("}", ""):
-            return table, i + 1
-        m = INLINE_KEY_RE.match(text, i)
-        if not m:
-            return table, len(text)
-        value, i = _toml_value(text, m.end())
-        _toml_assign(table, split_toml_key(m.group(1)), value)
-    return table, i
-
-
-def _toml_table(data, parts):
-    for part in parts:
-        child = data.get(part)
-        if not isinstance(child, dict):
-            child = data[part] = {}
-        data = child
-
-
-def _toml_assign(data, parts, value):
-    node = data
-    for part in parts[:-1]:
-        child = node.get(part)
-        if not isinstance(child, dict):
-            child = node[part] = {}
-        node = child
-    if isinstance(value, dict) and isinstance(node.get(parts[-1]), dict):
-        node[parts[-1]].update(value)
-    else:
-        node[parts[-1]] = value
-
-
-def _servers_of(data):
-    section = data.get("mcp_servers") if isinstance(data, dict) else None
+def parse_codex_servers(text):
+    """{server: url or None} from the text of .codex/config.toml; raises ValueError when it is not valid TOML."""
+    section = tomllib.loads(text).get("mcp_servers")
     if not isinstance(section, dict):
         return {}
-    for cfg in section.values():
-        if isinstance(cfg, dict) and isinstance(cfg.get("url"), _Escaped):
-            raise UnsupportedToml("escape sequences in a url")
     return {name: (cfg.get("url") if isinstance(cfg, dict) and isinstance(cfg.get("url"), str) else None)
             for name, cfg in section.items()}
-
-
-def strip_toml_comments(text):
-    """`text` without comments: a `#` outside a string, up to the end of its line."""
-    lines = []
-    for line in text.splitlines():
-        quote, i = None, 0
-        while i < len(line):
-            ch = line[i]
-            if quote:
-                if ch == "\\" and quote == '"':
-                    i += 1
-                elif ch == quote:
-                    quote = None
-            elif ch in "\"'":
-                quote = ch
-            elif ch == "#":
-                line = line[:i]
-                break
-            i += 1
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def parse_codex_servers_lines(text):
-    """{server: url or None} read line by line, for Pythons without tomllib. Understands `[a.b]` tables,
-    dotted keys, inline tables and bare or quoted names; it does not detect invalid TOML. It does not guess
-    at what it does not implement: triple-quoted strings, `[[mcp_servers...]]` headers and escapes in a url or in
-    a name raise UnsupportedToml."""
-    uncommented = strip_toml_comments(text)   # a comment may say anything, `'''` included
-    if '"""' in uncommented or "'''" in uncommented:
-        raise UnsupportedToml("triple-quoted strings")
-    data = {}
-    prefix = []
-    for line in text.splitlines():
-        array = re.match(r"^\s*\[\[(.*?)\]\]", line)
-        if array and split_toml_key(array.group(1))[0] == "mcp_servers":
-            raise UnsupportedToml("array-of-tables headers")
-        m = HEADER_RE.match(line)
-        if m:
-            if "\\" in m.group(1):
-                raise UnsupportedToml("escapes in a name")
-            prefix = split_toml_key(m.group(1))
-            _toml_table(data, prefix)
-            continue
-        if re.match(r"^\s*\[", line):
-            prefix = None  # not a table header we understand: its keys are not servers
-            continue
-        m = KEY_RE.match(line)
-        if m and prefix is not None:
-            if "\\" in m.group(1):
-                raise UnsupportedToml("escapes in a name")
-            value, _ = _toml_value(m.group(2), 0)
-            _toml_assign(data, prefix + split_toml_key(m.group(1)), value)
-    return _servers_of(data)
-
-
-def parse_codex_servers_tomllib(text):
-    """Same result through tomllib; raises ValueError for text that is not valid TOML."""
-    return _servers_of(tomllib.loads(text))
-
-
-def parse_codex_servers(text):
-    return parse_codex_servers_tomllib(text) if tomllib is not None else parse_codex_servers_lines(text)
 
 
 def mcp_servers(root):
@@ -592,12 +421,11 @@ def mcp_servers(root):
       'docs/reference/workspace.md, section "MCP servers"', tools=True)
 def check_mcp_parity(root, require_tools=False):
     out = []
-    try:
-        declared, errors = mcp_servers(root)
-    except UnsupportedToml as exc:
+    if tomllib is None and (Path(root) / ".codex" / "config.toml").is_file():
         return tool_missing("mcp-parity", require_tools,
-                            ".codex/config.toml uses TOML this Python cannot read without guessing (%s): "
-                            "it needs Python 3.11+ to be parsed" % exc, ".codex/config.toml")
+                            "reading .codex/config.toml needs Python 3.11+ (this is Python %d.%d)" % sys.version_info[:2],
+                            ".codex/config.toml")
+    declared, errors = mcp_servers(root)
     for rel, err in sorted(errors.items()):
         out.append(Violation("mcp-parity", rel, None, "file %s. Fix the syntax." % err))
     names = sorted(set(n for servers in declared.values() for n in servers))

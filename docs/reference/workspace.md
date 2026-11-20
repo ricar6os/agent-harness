@@ -93,7 +93,7 @@ branch before committing (step 3 of [`docs/agents/working-on-a-repo.md`](../agen
 worktree leaves a stale entry in the main clone, which the next sync prunes. Set
 `META_REPO_WORKTREES=0` to clone instead.
 
-Requirements: `git`, `jq`, `python3` (3.9 or newer, standard library only), SSH access to GitHub
+Requirements: `git`, `jq`, `python3` (3.9 or newer, standard library only; 3.11 or newer for the `mcp-parity` rule), SSH access to GitHub
 (`gh auth status`) and, for the spec workflow, the `openspec` CLI at the version in `openspec/cli-version` or a newer one of the same major (`npm i -g "@fission-ai/openspec@$(cat openspec/cli-version)"`).
 
 ## Manifest (`repos.json`)

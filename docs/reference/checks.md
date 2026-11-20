@@ -24,8 +24,7 @@ the place where the convention is written. Run `python3 scripts/check.py --list`
 
 A rule skips, and says so, when it cannot run: the `openspec` CLI is missing, older than
 `openspec/cli-version` or of another major version (`openspec-validate`), the directory is not a
-git work tree, or (`mcp-parity`, on Python 3.9 and 3.10 only) `.codex/config.toml` uses TOML the
-built-in fallback parser does not implement and needs Python 3.11+. With `--require-tools` those
+git work tree, or (`mcp-parity`) Python is older than 3.11, which cannot read `.codex/config.toml`. With `--require-tools` those
 cases are violations instead; CI uses it, so a skip never hides a failure there.
 
 CI (`.github/workflows/check.yml`) runs `scripts/check.py --require-tools` and the tests on

@@ -370,6 +370,20 @@ class TrackerTests(Base):
         self.assertClean(self.rule("tracker"))
 
 
+class McpParityWithoutTomllibTests(Base):
+    def test_python_without_tomllib_skips_or_violates(self):
+        with mock.patch.object(check, "tomllib", None):
+            with self.assertRaises(check.Skip) as ctx:
+                self.rule("mcp-parity")
+            self.assertIn("Python 3.11+", str(ctx.exception))
+            vs = self.rule("mcp-parity", require_tools=True)
+            self.assertViolation(vs, "mcp-parity", "Python 3.11+")
+            self.assertEqual([".codex/config.toml"], [v.path for v in vs])
+            (self.ws / ".codex/config.toml").unlink()
+            self.assertViolation(self.rule("mcp-parity"), "mcp-parity", "but not in .codex/config.toml")
+
+
+@unittest.skipIf(check.tomllib is None, "the mcp-parity rule needs Python 3.11+")
 class McpParityTests(Base):
     def test_green(self):
         self.assertClean(self.rule("mcp-parity"))
@@ -421,66 +435,12 @@ class McpParityTests(Base):
         "sub-table beside url": '[mcp_servers.linear-server]\nurl = "U"\n[mcp_servers.linear-server.env]\nurl = "x"\n',
     }
 
-    def test_toml_forms_fallback_parser(self):
+    def test_toml_forms_give_the_same_servers(self):
         for name, text in self.TOML_FORMS.items():
-            self.assertEqual({"linear-server": "U"}, check.parse_codex_servers_lines(text), name)
-
-    def test_toml_forms_agree_with_tomllib(self):
-        if check.tomllib is None:
-            self.assertEqual({}, check.parse_codex_servers_lines("[other]\nx = 1\n"))
-            return
-        for name, text in self.TOML_FORMS.items():
-            self.assertEqual(check.parse_codex_servers_lines(text), check.parse_codex_servers_tomllib(text), name)
+            self.assertEqual({"linear-server": "U"}, check.parse_codex_servers(text), name)
         extra = '[mcp_servers.a]\ncommand = "x"\n[mcp_servers.b.env]\nK = "v"\n[[other]]\nurl = "no"\n[x]\nurl = "no"\n'
-        self.assertEqual(check.parse_codex_servers_lines(extra), check.parse_codex_servers_tomllib(extra))
-        self.assertEqual({"a": None, "b": None}, check.parse_codex_servers_lines(extra))
-
-    UNSUPPORTED_TOML = {
-        "url inside a multi-line basic string": '[mcp_servers.a]\nurl = "U"\nnote = """\nurl = "other"\n"""\n',
-        "url inside a multi-line literal string": "[mcp_servers.a]\nnote = \'\'\'\nurl = 'other'\n\'\'\'\n",
-        "array of tables": '[[mcp_servers.a]]\nurl = "U"\n',
-        "escape in a url": '[mcp_servers.a]\nurl = "https://h/\\"x"\n',
-        "escape in a server name": '[mcp_servers."a\\"b"]\nurl = "U"\n',
-    }
-
-    def test_fallback_parser_refuses_what_it_does_not_implement(self):
-        for name, text in self.UNSUPPORTED_TOML.items():
-            with self.subTest(name):
-                with self.assertRaises(check.UnsupportedToml):
-                    check.parse_codex_servers_lines(text)
-
-    def test_fallback_parser_ignores_triple_quotes_in_comments(self):
-        for text in ('# use """ for long strings\n[mcp_servers.a]\nurl = "U"\n',
-                     "[mcp_servers.a]\nurl = \"U\"  # not \'\'\'multi-line\n",
-                     '[mcp_servers.a] # """\nurl = "U"\n'):
-            with self.subTest(text):
-                self.assertEqual({"a": "U"}, check.parse_codex_servers_lines(text))
-        with self.assertRaises(check.UnsupportedToml):   # a real one is still refused, comment or not
-            check.parse_codex_servers_lines('# note\n[mcp_servers.a]\nurl = "U"\nx = """\ny\n"""  # c\n')
-        self.assertEqual('x = "a # b" \'#\' ', check.strip_toml_comments('x = "a # b" \'#\' # c \'\'\''))   # `#` in a string stays
-
-    def test_fallback_parser_accepts_escapes_it_does_not_need(self):
-        text = '[mcp_servers.a]\nurl = "U"\ncommand = "C:\\\\x"\n'
-        self.assertEqual({"a": "U"}, check.parse_codex_servers_lines(text))
-
-    def test_without_tomllib_unsupported_toml_skips_or_violates(self):
-        for name, text in self.UNSUPPORTED_TOML.items():
-            write(self.ws, ".codex/config.toml", text)
-            with self.subTest(name), mock.patch.object(check, "tomllib", None):
-                with self.assertRaises(check.Skip) as ctx:
-                    self.rule("mcp-parity")
-                self.assertIn("Python 3.11+", str(ctx.exception))
-                vs = self.rule("mcp-parity", require_tools=True)
-                self.assertViolation(vs, "mcp-parity", "Python 3.11+")
-                self.assertEqual([".codex/config.toml"], [v.path for v in vs])
-
-    def test_the_same_files_are_parsed_when_tomllib_exists(self):
-        write(self.ws, ".codex/config.toml", '[mcp_servers.tracker]\nurl = "https://mcp.example.com/mcp"\nnote = """\nurl = "x"\n"""\n')
-        if check.tomllib is None:
-            with self.assertRaises(check.Skip):
-                self.rule("mcp-parity")
-        else:
-            self.assertClean(self.rule("mcp-parity"))
+        self.assertEqual({"a": None, "b": None}, check.parse_codex_servers(extra))
+        self.assertEqual({}, check.parse_codex_servers("[other]\nx = 1\n"))
 
     def test_every_toml_form_passes_parity(self):
         for name, text in self.TOML_FORMS.items():
@@ -492,10 +452,7 @@ class McpParityTests(Base):
     def test_invalid_toml_is_a_violation_naming_the_file(self):
         write(self.ws, ".codex/config.toml", "[mcp_servers.tracker\nurl = \n")
         vs = self.rule("mcp-parity")
-        if check.tomllib is None:
-            self.assertTrue(all(v.path != ".codex/config.toml" or "TOML" not in v.message for v in vs))
-        else:
-            self.assertEqual([".codex/config.toml"], [v.path for v in vs if "not valid TOML" in v.message])
+        self.assertEqual([".codex/config.toml"], [v.path for v in vs if "not valid TOML" in v.message])
 
 
 class SkillExposureTests(Base):
