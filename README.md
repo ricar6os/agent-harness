@@ -1,58 +1,81 @@
 # agent-harness
 
 Skills, an [OpenSpec](https://github.com/Fission-AI/OpenSpec) schema and a multi-repo workspace
-so AI agents plan and ship changes in phases you can review. Take only the part you need:
+so AI agents plan and ship changes in phases you can review. How you set it up depends on the
+repo:
 
-| You want | You take | How |
-| -------- | -------- | --- |
-| Skills in any repo | `create-pull-request`, `openspec-tracker-sync`, `unslop` | [Install the skills](#install-the-skills) |
-| Lean OpenSpec changes: specs and one plan of phases | The `spec-plan` schema | [Use the schema in a repo](#use-the-schema-in-a-repo) |
-| One workspace over several repos | This whole repository, as upstream | [Create a meta repo](#create-a-meta-repo) |
+| Your repo is | Set it up with |
+| ------------ | -------------- |
+| A product repo: one repo with code | [Set up a product repo](#set-up-a-product-repo): the skills with `npx skills`, the schema with OpenSpec |
+| A new workspace over several repos | [Set up a new meta repo](#set-up-a-new-meta-repo): a clone of this repository, as upstream |
+| A meta created from the old template | [Adopt the harness in an existing meta](#adopt-the-harness-in-an-existing-meta): one merge |
 
-## Install the skills
+Copy no files by hand in any of the three. A clone keeps the history that later updates merge
+through, and `npx skills` records what it installed in `skills-lock.json`.
+
+## Set up a product repo
+
+Run every command from the root of the repo. Nothing of this repository is copied except the
+skills you pick and the schema folder.
+
+### 1. The skills
 
 ```bash
-npx skills@latest add <owner>/agent-harness
+npx skills@latest add <owner>/agent-harness --skill create-pull-request openspec-tracker-sync unslop
 ```
 
-Pick the skills and the agents to install them on. `npx skills` copies skill folders and nothing
-else: no schema, no scripts, no hooks. The skills in the "Meta workspace" group only work inside
-a meta repo. `create-rule`, `deterministify` and `openspec-create-spec-from-code` come from
-[CodelyTV/agent-harness](https://github.com/CodelyTV/agent-harness); install them from there.
+It asks which agents to install them on, writes the skills to `.agents/skills/`, links them for
+each agent and records them in `skills-lock.json`. Commit all of it. Leave `--skill` out to pick
+from the list; the skills of its "Meta workspace" group only work inside a meta repo.
+`npx skills update` brings later versions.
 
-## Use the schema in a repo
+The skills this harness takes from Codely are installed from their repository:
+
+```bash
+npx skills@latest add codelytv/agent-harness --skill create-rule deterministify openspec-create-spec-from-code
+```
+
+### 2. OpenSpec and the schema
 
 The schema is data for the OpenSpec CLI, so on its own it does nothing: the repo needs the CLI,
 and the agent needs OpenSpec's workflow skills.
 
-1. Install the CLI: `npm i -g @fission-ai/openspec`.
-2. In the repo, run `openspec init --scope project --tools claude,codex`. It creates `openspec/`
-   and installs OpenSpec's workflow skills (`openspec-propose`, `openspec-apply-change` and the
-   others) in the repo. Without `--scope project` they are installed for the whole machine.
-3. Copy the schema. From a public harness:
-   `npx degit <owner>/agent-harness/openspec/schemas/spec-plan openspec/schemas/spec-plan`.
-   From a private one, which `degit` cannot read, with the `gh` CLI:
+```bash
+npm i -g @fission-ai/openspec
+openspec init --scope project --tools claude,codex
 
-   ```bash
-   mkdir -p openspec/schemas/spec-plan
-   gh api repos/<owner>/agent-harness/tarball \
-     | tar -xz -C openspec/schemas/spec-plan --strip-components=4 '*/openspec/schemas/spec-plan'
-   ```
+mkdir -p openspec/schemas/spec-plan
+gh api repos/<owner>/agent-harness/tarball \
+  | tar -xz -C openspec/schemas/spec-plan --strip-components=4 '*/openspec/schemas/spec-plan'
+```
 
-4. Select it in `openspec/config.yaml`: `schema: spec-plan`.
-5. Optional, to mirror phases to Linear or GitHub: install `openspec-tracker-sync` with
-   `npx skills`, and copy `x-tracker`, `rules:` and `operations:` from this repository's
-   [`openspec/config.yaml`](openspec/config.yaml).
+Then set `schema: spec-plan` in `openspec/config.yaml`, and commit `openspec/` and the skills.
 
-Then `/openspec-propose` writes lean specs and one `plan.md`, `/openspec-apply-change` implements
-one phase per run, and `/openspec-archive-change` merges the specs. In a single repo the plan
-has no `**Repos:**` lines and nothing else changes.
+- `openspec init` creates `openspec/` and installs OpenSpec's workflow skills
+  (`openspec-propose`, `openspec-apply-change` and the others) in the repo. Without
+  `--scope project` it installs them for the whole machine instead.
+- The `gh` command copies the schema from a private harness. From a public one,
+  `npx degit <owner>/agent-harness/openspec/schemas/spec-plan openspec/schemas/spec-plan` does
+  the same; `degit` cannot read a private repository.
 
-## Create a meta repo
+### 3. The tracker (optional)
+
+To mirror the phases of a plan to Linear or GitHub, copy `x-tracker`, `rules:` and `operations:`
+from this repository's [`openspec/config.yaml`](openspec/config.yaml) into yours, and set
+`x-tracker` to `linear` or `github`. Without them, the checkboxes of `plan.md` are the tracking.
+
+### 4. Use it
+
+`/openspec-propose` writes lean specs and one `plan.md`, `/openspec-apply-change` implements one
+phase per run and stops, and `/openspec-archive-change` merges the specs. `/create-pull-request`
+writes the PR of each phase. In a single repo the plan has no `**Repos:**` lines.
+
+## Set up a new meta repo
 
 A meta is a repo with no product code that groups an organization's repositories, so agents
-get organization-wide context, specs that span repos and shared skills. Each meta is a copy of
-this repository that keeps its history, so harness updates arrive with a merge.
+get organization-wide context, specs that span repos and shared skills. It is a clone of this
+repository that keeps its history: clone it, never copy its files, so that harness updates
+arrive with a merge.
 
 1. Create an empty private repo for the meta: `gh repo create <org>/<name> --private`.
 2. Clone the harness under the meta's name and point it at the new repo, keeping the harness as
@@ -69,7 +92,46 @@ this repository that keeps its history, so harness updates arrive with a merge.
 4. `make doctor && make sync && make check`.
 5. `openspec init --scope project --tools claude,codex` installs OpenSpec's workflow skills in the
    meta. It keeps `openspec/config.yaml` as it is. Commit them, then open the meta's first PR.
-6. Pick the issue tracker with `x-tracker` at the top of `openspec/config.yaml`: `linear`, `github` or `none` (see "Issue tracker" below). With Linear, the team is resolved with the user at the first sync.
+6. Pick the issue tracker with `x-tracker` at the top of `openspec/config.yaml`: `linear`,
+   `github` or `none` (see [the specs reference](docs/reference/specs.md)). With Linear, the team
+   is resolved with the user at the first sync.
+
+The skills, the schema and the scripts come with the clone: a meta needs no `npx skills`.
+
+## Adopt the harness in an existing meta
+
+A meta created from the old GitHub template has the harness's files and none of its history.
+One merge joins the two; after it, updates are plain merges.
+
+```bash
+git remote add harness git@github.com:<owner>/agent-harness.git
+git fetch harness
+git checkout -b chore/adopt-harness
+
+# 1. Take the harness's version of every file both sides have.
+git merge harness/main --allow-unrelated-histories -X theirs --no-commit
+
+# 2. Take back your own files that the merge overwrote.
+git checkout HEAD -- repos.json
+
+# 3. Remove what the harness deleted since the template (old skills, the glossary map).
+root=$(git rev-list --max-parents=0 harness/main)
+git diff -z --name-only --diff-filter=D "$root" harness/main | xargs -0 git rm -q --ignore-unmatch --
+
+git status                      # review before committing
+git commit -m "chore: adopt the agent-harness upstream"
+make check && make test
+openspec init --scope project --tools claude,codex
+```
+
+- Step 2 names the instance-owned files that exist on both sides. `repos.json` is the usual
+  one; add `openspec/config.yaml` when you changed it and want your version back. Files only
+  you have (`openspec/changes/`, `openspec/specs/`, `docs/conventions/`, `env/`) are not touched.
+- Step 3 also removes `GLOSSARY-MAP.md` and the old `openspec-*` skills. To keep a file you
+  still use, bring it back before committing: `git checkout HEAD -- GLOSSARY-MAP.md`.
+- A change in flight keeps its artifacts: each change records its schema in `.openspec.yaml`.
+
+Open the branch as a PR in the meta.
 
 ## Bring harness updates into a meta
 
@@ -81,8 +143,8 @@ make check && make test
 ```
 
 Conflicts can only come from instance-owned files (below) or from harness files the meta
-changed on purpose, such as the `x-tracker` line of step 6: keep the meta's side for those.
-Open the result as a PR in the meta.
+changed on purpose, such as the `x-tracker` line: keep the meta's side for those. Open the
+result as a PR in the meta.
 
 ## Harness files and your files
 

@@ -4,7 +4,7 @@ Read this before you explore, propose, apply or archive an OpenSpec change. Each
 
 ## The workflow
 
-The workflow skills are OpenSpec's own, installed by `openspec init` (see `README.md`, "Use the schema in a repo"). This workspace changes what they produce through its schema, `spec-plan`, and its `openspec/config.yaml`.
+The workflow skills are OpenSpec's own, installed by `openspec init` (see `README.md`, "Set up a product repo"). This workspace changes what they produce through its schema, `spec-plan`, and its `openspec/config.yaml`.
 
 | Step | Skill | Result with the `spec-plan` schema |
 | ---- | ----- | ---------------------------------- |
