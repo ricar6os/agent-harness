@@ -1,6 +1,6 @@
 ## Why
 
-<!-- The problem, not the solution, in product vocabulary, 1-3 sentences. Link the OpenSpec change and the Linear issue. -->
+<!-- The problem, not the solution, in product vocabulary, 1-3 sentences. Link the OpenSpec change and the phase's issue, if any (GitHub: `Part of owner/repo#13`). -->
 
 ## What changes
 
@@ -12,7 +12,7 @@
 
 <!--
 Only for a change that spans repos; delete otherwise.
-List the PRs of this PR's phase (task group), in that phase's deployment order from the change's design.md, each with its PR link or "not opened yet" (in backticks if left as a placeholder). Mark this one.
+List the PRs of this PR's phase, in the order of that phase's `**Repos:**` line in the change's plan.md, each with its PR link or "not opened yet" (in backticks if left as a placeholder). Mark this one.
 One line names the earlier phases as already shipped or still open.
 Then one sentence: what must be merged and deployed before this PR, and what waits for it.
 -->
@@ -41,7 +41,7 @@ Delete the section only when nothing outside the tests can observe the change (c
 
 ## How I verified
 
-<!-- Commands actually run and their real result, including `make repo-check REPO=<name>` (the workspace repository: `make check` and `make test`); and what was not checked. Never list a check that was not done. -->
+<!-- Commands actually run and their real result, including the repo's verification command; and what was not checked. Never list a check that was not done. -->
 
 - `<item>`
 

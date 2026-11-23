@@ -1,42 +1,37 @@
-# meta — multi-repo workspace
+# Meta workspace
 
-Repo holds no product code. Entry point for AI agents w/ visibility across every org repo, and for specs spanning several repos. Layout is in `README.md`: `repos.json` manifest, `scripts/`, `repos/<name>/` clones, `env/` secrets, `openspec/`, `.agents/skills/`.
+This repository holds no product code. It gives AI agents one entry point with visibility across every repository of the organization, and it holds the specs of work that spans several of them. `docs/reference/workspace.md` describes the layout: the `repos.json` manifest, `scripts/`, the clones in `repos/<name>/`, the secrets in `env/`, `openspec/` and `.agents/skills/`.
 
 ## Language
 
-**Everything here written in English**: code, comments, commits, scripts, skills, specs, docs. Reply to the user in their language, never write Spanish (or other) into files here.
+Write everything in this repository in English: code, comments, commits, scripts, skills, specs and docs. Reply to the user in their language.
 
 ## Hard rules
 
-- `repos/` empty or incomplete → `make sync` before working.
-- Secrets live in `env/<name>/` of the main checkout only (shared by every worktree; `scripts/init.sh` symlinks them): never committed, here or in any repo, never in the conversation.
-- Each `repos/<name>` is its own git repo: product code is committed there, never from the root. Root versions manifest, scripts, specs, skills.
-- Never commit to a default branch.
-- Ask first before: removing entries from `repos.json`, merging PRs, force-pushing, rewriting history, deleting branches, anything touching prod infra.
-- Hook block (`scripts/guard.py`) → stop and ask; never find another route. `scripts/guard.py --explain '<cmd>'` says why.
-- `make check` before committing here; fix what it reports, never bypass.
-- Never hand-edit generated `openspec-*` skills: run `make openspec`.
-- User corrects a convention → make it a rule where it lives, not only a fix (`docs/agents/conventions.md`). Start `deterministify` only when the user asks.
-- Repo instructions (`repos/<name>/AGENTS.md`) are more specific than this file.
+- When `repos/` is empty or incomplete, run `make sync` before working.
+- Secrets live in `env/<name>/` of the main checkout, which every worktree shares (`scripts/init.sh` symlinks them). Keep them out of every commit, here and in the repos, and out of the conversation.
+- Each `repos/<name>` is its own git repository: commit product code there. The root versions the manifest, the scripts, the specs and the skills.
+- Work on a branch. A default branch changes only through a pull request.
+- Ask first before removing entries from `repos.json`, merging PRs, force-pushing, rewriting history, deleting branches or touching production infrastructure.
+- When a hook (`scripts/guard.py`) blocks a call, stop and ask the user. `scripts/guard.py --explain '<cmd>'` says why it blocked.
+- Run `make check` before committing here, and fix what it reports.
+- When the user corrects you on a convention, also make it a rule where the convention lives ([conventions](docs/agents/conventions.md)). Start `deterministify` only when the user asks.
 
 ## Instruction precedence
 
-When instructions conflict, use this precedence:
+When instructions conflict, the first of these wins:
 
 1. Explicit user instructions
-2. Repository-local AGENTS.md
-3. Repository-local relevant skills
-4. Meta-repository AGENTS.md
-5. Meta-repository skills
-
-Repository-specific instructions override organization defaults. Prefer a repo's own skills over root-level ones.
+2. The `AGENTS.md` of the repository being edited (`repos/<name>/AGENTS.md`)
+3. That repository's own skills
+4. This file
+5. The skills of this workspace
 
 ## Always
 
-- OpenSpec: every change has one product (`x-product`) and one Linear project (`x-linear-project`). Resolve and announce the product before any OpenSpec operation; never infer it.
-- Commits and PR titles: Conventional Commits, `type(scope): description`; PR title with a task id: `feat(x): ABC-123 add y`; commits never carry the id.
-- A change spanning several repos starts as an OpenSpec change (`/openspec-propose`); its design has `## Contracts` and `## Deployment order`; one PR per repo.
-- Issues live in Linear (`linear-server` MCP); GitHub holds code and PRs only.
+- Commits and PR titles follow Conventional Commits: `type(scope): description`.
+- Work that spans several repos starts as an OpenSpec change (`openspec-propose`). Its `plan.md` splits the work into phases, `openspec-apply-change` implements one phase per run, and each phase gets one PR per repo.
+- Issues live in the tracker that `x-tracker` sets in `openspec/config.yaml`: `linear`, `github` or `none` (then `plan.md` is the only tracking). Use only that one.
 
 ## Map
 
@@ -45,10 +40,9 @@ Read only what the task needs.
 | About to | Read |
 | -------- | ---- |
 | Edit, commit or open a PR in `repos/<name>` or in this repo | [working-on-a-repo](docs/agents/working-on-a-repo.md); skill `create-pull-request` for title and body |
-| Change this repo: skills, scripts, manifest, instructions; add a repo to the manifest; upgrade the OpenSpec CLI | [workspace-changes](docs/agents/workspace-changes.md) |
-| Propose, sync or apply an OpenSpec change | [openspec](docs/agents/openspec.md); skill `openspec-linear-sync` after `tasks.md` changes |
+| Change this repo: skills, scripts, manifest, instructions, the OpenSpec schema or CLI version | [workspace-changes](docs/agents/workspace-changes.md) |
+| Explore, propose, apply or archive an OpenSpec change | [openspec](docs/agents/openspec.md), then the `openspec-*` skill of that step |
 | Write baseline specs from code | skill `openspec-create-spec-from-code` (user-invoked) |
-| Read or write issues (Linear, never GitHub Issues) | [issue-tracker](docs/agents/issue-tracker.md) |
-| Explore a domain | `GLOSSARY-MAP.md`, then [domain](docs/agents/domain.md) |
+| Read or write issues | [issue-tracker](docs/agents/issue-tracker.md) |
 | Turn a correction into a rule | [conventions](docs/agents/conventions.md); skill `create-rule` (in a repo) |
 | Clone or update repos | skill `sync-repos` |

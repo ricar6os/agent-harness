@@ -1,0 +1,50 @@
+name: spec-plan
+version: 1
+description: Lean specs and one plan.md of vertical slice phases; apply implements one phase per run, in one or several repos
+artifacts:
+  - id: specs
+    generates: "specs/**/*.md"
+    description: Lean behaviour specs, one per capability
+    template: spec.md
+    instruction: |
+      Observable behaviour only: no class names, libraries or implementation steps.
+
+      - Reuse the capability paths listed by `openspec list --specs`. Name new ones after a durable behaviour (`order-cancellation`, not `add-cancel-button`).
+      - One behaviour per requirement, in one or two sentences with SHALL or MUST. Add scenarios only for distinct edge cases, one line each.
+      - Write the scenario keywords GIVEN, WHEN and THEN in capitals, as in the template: `openspec validate --strict` reads them.
+      - The Purpose of a new capability has at least 50 characters: a shorter one fails strict validation once the spec is archived.
+      - MODIFIED copies the whole existing requirement, keeping every scenario.
+    requires: []
+
+  - id: plan
+    generates: plan.md
+    description: Goal, decisions and vertical slice phases, each with its repos, contracts, tests and tasks
+    template: plan.md
+    instruction: |
+      Plan how to implement the specs. Keep it short: it is reviewed together with the specs.
+
+      - Decisions: choices and assumptions not stated in the request, one line each, naming the discarded alternative when it is not obvious. When a provider keeps an old contract shape alive for a transition, state the condition that ends it (a later phase, a release). End with what is out of scope.
+      - Phases: one phase per part of the change that is worth having on its own, even if the rest were never built. Parts that are only valuable together form one phase. A phase is a vertical slice through every layer and repo it needs, builds and passes verification alone, and never leaves the system in a wrong business state. Phases run in file order: a later phase may rely on every earlier one.
+      - Repos: when the workspace has more than one repo, each phase lists the repos it touches, by the name the workspace instructions use, in deployment order (`api → web`). Write `api, web` when they can ship in either order. Omit the line in a single-repo workspace.
+      - Contracts: public signatures only, in the language each one is written in, grouped by type (API endpoints and payloads, domain events, database schemas another repo reads, package exports, application services, UI copy). For a contract that crosses repos, name the repo that provides it. Omit types without changes.
+      - Tests: the test strategy of the phase, proving its behaviour with as few tests as possible. One acceptance test per user goal through the public API or UI, and unit tests for the rules, with cases picked by equivalence partitioning and boundary values. Between repos, use contract tests against the phase's Contracts instead of end-to-end runs. Never prove the same behaviour twice at different levels. List each suite with the behaviours it covers.
+      - Tasks: prefix each task with its repo in a multi-repo phase (`api: add the endpoint`). Cite the existing code to copy patterns from in the task that needs it.
+      - Each phase ends with the verification task of the template.
+      - Only phase tasks are checkboxes: every `- [ ]` in this file counts as a task.
+      - Text in square brackets at the end of a phase heading is an issue id written by a tracker sync: keep it when editing.
+    requires:
+      - specs
+
+apply:
+  requires: [plan]
+  tracks: plan.md
+  instruction: |
+    Implement only the first phase with unchecked tasks, then stop. This overrides any instruction to
+    keep going through every remaining task: the tasks of later phases wait for the next run.
+
+    1. Resolve each repo of the phase (its checkout and its verification command) as the workspace instructions say. Work on a branch in each repo, never on its default branch.
+    2. Implement the tasks in the phase's repo order and check off each one as you finish it.
+    3. Run the verification task in every repo the phase touched. Fix what fails before going on.
+    4. Add or update in the frontmatter `implemented_by` (same shape as `created_by`, for the tool and model of this run), `last_implementation_at` (the output of `date -u +%Y-%m-%dT%H:%M:%SZ`), and `completed: true` after the last phase. Rewrite the Next step.
+    5. Commit the phase as one conventional commit in each repo it touched, and plan.md in the repo that holds the change. Never push or open a pull request.
+    6. Stop and report what changed per repo. The next phase starts only when the user runs apply again.

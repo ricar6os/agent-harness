@@ -14,13 +14,12 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.parse
 from pathlib import Path
 
 try:
     import tomllib  # Python 3.11+
-except ImportError:  # the line parser below covers older Pythons
+except ImportError:  # the mcp-parity rule skips on older Pythons
     tomllib = None
 
 DEFAULT_ROOT = Path(__file__).resolve().parent.parent
@@ -121,7 +120,7 @@ def nonempty_str(value):
 # ---------------------------------------------------------------------------------------------
 
 @rule("manifest", "repos.json has a known shape, valid products and unique names and paths",
-      'README.md, section "Manifest (`repos.json`)"')
+      'docs/reference/workspace.md, section "Manifest (`repos.json`)"')
 def check_manifest(root):
     out = []
     rel = "repos.json"
@@ -134,7 +133,7 @@ def check_manifest(root):
         bad("file %s. Fix the syntax." % err)
         return out
     if data is None:
-        bad("file not found. Create it from the example in README.md, section \"Manifest (repos.json)\".")
+        bad("file not found. Create it from the example in docs/reference/workspace.md, section \"Manifest (repos.json)\".")
         return out
     if not isinstance(data, dict):
         bad("top level must be an object with the keys org, root and repos.")
@@ -252,13 +251,6 @@ def parse_simple_yaml(text):
     return result
 
 
-LEGACY_KEYS = collections.OrderedDict([
-    ("product", "x-product"),
-    ("linear_project", "x-linear-project"),
-    ("linear_sync_version", "x-linear-sync-version"),
-])
-
-
 def list_change_dirs(root):
     base = Path(root) / "openspec" / "changes"
     active, archived = [], []
@@ -275,20 +267,23 @@ def relpath(root, path):
     return Path(os.path.relpath(str(path), str(root))).as_posix()
 
 
-@rule("change-product", "each change has a known product; spec paths and Linear project ids agree with it",
-      'docs/agents/openspec.md, section "Products and Linear projects"')
+@rule("change-product", "a change has a known product exactly when repos.json declares products; spec paths agree; no tracker container is shared",
+      'docs/agents/openspec.md, section "Products and trackers"')
 def check_change_product(root):
     out = []
     root = Path(root)
     known = known_products(root)
+    spec_shape = "<product>/<capability>/spec.md" if known else "<capability>/spec.md"
     active, archived = list_change_dirs(root)
-    projects = collections.OrderedDict()
+    containers = collections.OrderedDict()
 
-    def record_project(change_dir, meta):
-        linear = meta.get("x-linear-project", meta.get("linear_project"))
-        pid = linear.get("id") if isinstance(linear, dict) else None
-        if pid:
-            projects.setdefault(pid, []).append(change_dir)
+    def record_container(change_dir, meta):
+        """The tracker container of a change: its Linear project or its GitHub parent issue."""
+        linear, github = meta.get("x-linear-project"), meta.get("x-github-issue")
+        if isinstance(linear, dict) and linear.get("id"):
+            containers.setdefault("x-linear-project.id %s" % linear["id"], []).append(change_dir)
+        if isinstance(github, dict) and github.get("repo") and github.get("number"):
+            containers.setdefault("x-github-issue %s#%s" % (github["repo"], github["number"]), []).append(change_dir)
 
     for change in active:
         yaml_rel = relpath(root, change / ".openspec.yaml")
@@ -296,33 +291,32 @@ def check_change_product(root):
         meta = parse_simple_yaml(text) if text is not None else {}
         product = meta.get("x-product")
         product = product if isinstance(product, str) and product else None
-        legacy = [k for k in LEGACY_KEYS if k in meta]
-        for old in legacy:
-            out.append(Violation("change-product", yaml_rel, None,
-                                 "`%s` is the old key name. Rename it to `%s`, value unchanged: OpenSpec 2 rejects "
-                                 "unknown keys in strict validation, and only `x-` keys are kept without a warning."
-                                 % (old, LEGACY_KEYS[old])))
         if text is None:
-            out.append(Violation("change-product", relpath(root, change), None,
-                                 "missing .openspec.yaml. Create it with a top-level `x-product: <slug>`."))
+            if known:
+                out.append(Violation("change-product", relpath(root, change), None,
+                                     "missing .openspec.yaml. Create it with a top-level `x-product: <slug>`."))
         elif product is None:
-            if "product" not in legacy:
+            if known:
                 out.append(Violation("change-product", yaml_rel, None,
                                      "no top-level `x-product: <slug>`. Record the one product this change belongs to."))
-        elif known and product not in known:
+        elif not known:
+            out.append(Violation("change-product", yaml_rel, None,
+                                 '`x-product: %s` but repos.json declares no products. Remove the key, or add '
+                                 '"products" to the repos in repos.json.' % product))
+        elif product not in known:
             out.append(Violation("change-product", yaml_rel, None,
                                  'product "%s" is not in repos.json. Known products: %s. Fix the slug or add the product to a repo.'
                                  % (product, ", ".join(sorted(known)))))
-        record_project(change, meta)
+        record_container(change, meta)
         specs = change / "specs"
         if specs.is_dir():
             for spec in sorted(specs.rglob("spec.md")):
                 parts = spec.relative_to(specs).parts
-                if len(parts) != 3:
+                if len(parts) != (3 if known else 2):
                     out.append(Violation("change-product", relpath(root, spec), None,
-                                         "delta spec must sit at specs/<product>/<capability>/spec.md."
-                                         + (' Move it under specs/%s/.' % product if product else "")))
-                elif product and parts[0] != product:
+                                         "delta spec must sit at specs/%s." % spec_shape
+                                         + (' Move it under specs/%s/.' % product if known and product else "")))
+                elif known and product and parts[0] != product:
                     out.append(Violation("change-product", relpath(root, spec), None,
                                          'delta spec is under product "%s" but the change is product "%s". '
                                          'Move it to specs/%s/%s/spec.md, or split the work into a separate change.'
@@ -331,253 +325,54 @@ def check_change_product(root):
     for change in archived:
         text = read_text(change / ".openspec.yaml")
         if text is not None:
-            record_project(change, parse_simple_yaml(text))
+            record_container(change, parse_simple_yaml(text))
 
     main_specs = root / "openspec" / "specs"
     if main_specs.is_dir():
         for spec in sorted(main_specs.rglob("spec.md")):
             parts = spec.relative_to(main_specs).parts
-            if len(parts) != 3:
+            if len(parts) != (3 if known else 2):
                 out.append(Violation("change-product", relpath(root, spec), None,
-                                     "main spec must sit at openspec/specs/<product>/<capability>/spec.md."))
+                                     "main spec must sit at openspec/specs/%s." % spec_shape))
             elif known and parts[0] not in known:
                 out.append(Violation("change-product", relpath(root, spec), None,
                                      'main spec directory "%s" is not a product in repos.json. Known products: %s.'
                                      % (parts[0], ", ".join(sorted(known)))))
 
-    for pid, dirs in projects.items():
+    for container, dirs in containers.items():
         if len(dirs) > 1:
             names = ", ".join(relpath(root, d) for d in dirs)
             out.append(Violation("change-product", relpath(root, dirs[0] / ".openspec.yaml"), None,
-                                 "x-linear-project.id %s is used by %d changes: %s. Each change has its own Linear project."
-                                 % (pid, len(dirs), names)))
+                                 "%s is used by %d changes: %s. Each change has its own Linear project or GitHub parent issue."
+                                 % (container, len(dirs), names)))
     return out
 
 
 # ---------------------------------------------------------------------------------------------
-# 3. task-dependencies
+# 3. tracker
 # ---------------------------------------------------------------------------------------------
 
-GROUP_RE = re.compile(r"^## (\d+)\. ")
-TASK_RE = re.compile(r"^- \[[ xX]\] (\d+)\.(\d+) ")
-TASK_DEP_RE = re.compile(r"^[ \t]+- Depends on:(.*)$")
-GROUP_DEP_RE = re.compile(r"^Depends on:(.*)$")
+TRACKERS = ("linear", "github", "none")
+TRACKER_RE = re.compile(r"^x-tracker:[ \t]*(.*?)[ \t]*(?:#.*)?$", re.M)
 
 
-def label(node):
-    return ".".join(str(n) for n in node)
-
-
-def find_cycles(adj):
-    """Distinct simple cycles found by depth-first search, each rotated to start at its
-    smallest node. Returns a list of node lists (without repeating the first node)."""
-    color = {}
-    stack = []
-    seen = set()
-    cycles = []
-
-    def visit(node):
-        color[node] = 1
-        stack.append(node)
-        for nxt in sorted(adj.get(node, ())):
-            if color.get(nxt) == 1:
-                cyc = stack[stack.index(nxt):]
-                k = cyc.index(min(cyc))
-                cyc = cyc[k:] + cyc[:k]
-                if tuple(cyc) not in seen:
-                    seen.add(tuple(cyc))
-                    cycles.append(cyc)
-            elif nxt not in color:
-                visit(nxt)
-        stack.pop()
-        color[node] = 2
-
-    old = sys.getrecursionlimit()
-    sys.setrecursionlimit(max(old, 10000))
-    try:
-        for node in sorted(adj):
-            if node not in color:
-                visit(node)
-    finally:
-        sys.setrecursionlimit(old)
-    return cycles
-
-
-def check_tasks_text(rel, text):
-    out = []
-
-    def bad(line, msg):
-        out.append(Violation("task-dependencies", rel, line, msg))
-
-    groups = {}
-    tasks = {}
-    task_deps = []   # (task, line, raw refs)
-    group_deps = []  # (group, line, raw refs)
-    cur_group = None
-    last_task = None
-    fence = None          # (character, length, line) of the code fence that is open
-    comment_line = None   # line where the open multi-line HTML comment starts
-    for i, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        if fence:
-            if stripped and set(stripped) == {fence[0]} and len(stripped) >= fence[1]:
-                fence = None
-            continue
-        if comment_line:
-            if "-->" in line:
-                comment_line = None
-            continue
-        if stripped.startswith(("```", "~~~")):
-            run = len(stripped) - len(stripped.lstrip(stripped[0]))
-            # a backtick fence cannot carry a backtick in its info string: "```bash```" is inline code
-            if not (stripped[0] == "`" and "`" in stripped[run:]):
-                fence = (stripped[0], run, i)
-                continue
-        if stripped.startswith("<!--"):
-            if stripped.find("-->", 4) < 0:
-                comment_line = i
-            continue
-        m = GROUP_RE.match(line)
-        if m:
-            n = int(m.group(1))
-            if n in groups:
-                bad(i, "group %d is declared twice (first at line %d). Renumber one of them." % (n, groups[n]))
-            else:
-                groups[n] = i
-            cur_group, last_task = n, None
-            continue
-        m = TASK_RE.match(line)
-        if m:
-            key = (int(m.group(1)), int(m.group(2)))
-            if cur_group is None:
-                bad(i, "task %s appears before any group heading. Put it under a `## %d. <objective>` heading."
-                    % (label(key), key[0]))
-            elif key[0] != cur_group:
-                bad(i, "task %s is under group %d. Renumber it %d.<n>, or move it under group %d."
-                    % (label(key), cur_group, cur_group, key[0]))
-            if key in tasks:
-                bad(i, "task %s is declared twice (first at line %d). Renumber one of them." % (label(key), tasks[key]))
-            else:
-                tasks[key] = i
-            last_task = key
-            continue
-        m = TASK_DEP_RE.match(line)
-        if m:
-            if last_task is None:
-                bad(i, "`Depends on:` has no task to attach to. Put it directly under a task checkbox line.")
-            else:
-                task_deps.append((last_task, i, m.group(1)))
-            continue
-        m = GROUP_DEP_RE.match(line)
-        if m:
-            if cur_group is None:
-                bad(i, "`Depends on:` is before any group heading. Put it after the objective of the group that waits.")
-            else:
-                group_deps.append((cur_group, i, m.group(1)))
-
-    if fence:
-        bad(fence[2], "this code fence is never closed, so the lines after it were not checked. Close it with %s."
-            % (fence[0] * fence[1]))
-    if comment_line:
-        bad(comment_line, "this HTML comment is never closed, so the lines after it were not checked. Close it with `-->`.")
-
-    def parse_refs(line, raw):
-        refs = []
-        for part in [p.strip() for p in raw.split(",")]:
-            if re.fullmatch(r"\d+", part):
-                refs.append((int(part),))
-            elif re.fullmatch(r"\d+\.\d+", part):
-                a, b = part.split(".")
-                refs.append((int(a), int(b)))
-            else:
-                bad(line, 'malformed reference "%s". Use a group number (N) or a task number (N.M), comma-separated.' % part)
-        return refs
-
-    def ref_text(ref):
-        return "group %d" % ref[0] if len(ref) == 1 else label(ref)
-
-    group_adj = collections.defaultdict(set)   # group -> groups it waits for
-    explicit_of = collections.defaultdict(list)  # task -> valid refs from its own lines
-    for task, line, raw in task_deps:
-        for ref in parse_refs(line, raw):
-            owner = "task " + label(task)
-            if len(ref) == 1:
-                if ref[0] not in groups:
-                    bad(line, "%s depends on %s, which does not exist. Fix the reference or remove it." % (owner, ref_text(ref)))
-                elif ref[0] == task[0]:
-                    bad(line, "%s depends on its own group %d. Remove the line; a task already belongs to its group." % (owner, ref[0]))
-                else:
-                    explicit_of[task].append(ref)
-            elif ref not in tasks:
-                bad(line, "%s depends on %s, which does not exist. Fix the reference or remove it." % (owner, label(ref)))
-            elif ref == task:
-                bad(line, "%s depends on itself. Remove the reference." % owner)
-            else:
-                explicit_of[task].append(ref)
-    for group, line, raw in group_deps:
-        for ref in parse_refs(line, raw):
-            owner = "group %d" % group
-            if len(ref) == 2:
-                bad(line, "%s depends on task %s; group dependencies name groups only. Use a group number here, "
-                          "or declare the dependency on the task that waits." % (owner, label(ref)))
-            elif ref[0] not in groups:
-                bad(line, "%s depends on group %d, which does not exist. Fix the reference or remove it." % (owner, ref[0]))
-            elif ref[0] == group:
-                bad(line, "%s depends on itself. Remove the reference." % owner)
-            else:
-                group_adj[(group,)].add((ref[0],))
-
-    for cyc in find_cycles(group_adj):
-        path = " → ".join(label(n) for n in cyc + [cyc[0]])
-        bad(groups[cyc[0][0]], "group dependencies form a cycle: %s. Remove one `Depends on:` line to break it." % path)
-
-    # Deadlock graph. Nodes: tasks (g, n) and groups (g,). A task waits for the tasks and groups it names and
-    # for the groups its own group depends on; a group waits for each of its tasks and for the groups it names.
-    # Every edge remembers where it comes from: "named" (a task's own line) or "implied" (group structure).
-    graph = collections.defaultdict(lambda: collections.defaultdict(set))
-    for task in tasks:
-        for ref in explicit_of.get(task, ()):
-            graph[task][ref].add("named")
-        for target in group_adj.get((task[0],), ()):
-            graph[task][target].add("implied")
-        graph[(task[0],)][task].add("implied")
-    for group, targets in group_adj.items():
-        for target in targets:
-            graph[group][target].add("implied")
-    plain = {n: set(e) for n, e in graph.items()}
-
-    def shown(cyc):
-        """Groups between two tasks only expand `task → group → task`: leave them out of the printed path."""
-        kept = []
-        for k, node in enumerate(cyc):
-            if len(node) == 1 and len(cyc[k - 1]) == 2 and len(cyc[(k + 1) % len(cyc)]) == 2:
-                continue
-            kept.append(node)
-        return " → ".join(ref_text(n) if len(n) == 1 else label(n) for n in kept + kept[:1])
-
-    for cyc in find_cycles(plain):
-        hops = list(zip(cyc, cyc[1:] + cyc[:1]))
-        if all(graph[a][b] == {"implied"} for a, b in hops):
-            continue  # follows from group dependencies alone: already reported as a group cycle
-        first = cyc[0]
-        bad(tasks[first] if len(first) == 2 else groups[first[0]],
-            "task dependencies form a deadlock: %s. A task waits for the tasks and groups it names and for the groups its "
-            "own group depends on; a group waits for all its tasks and the groups it depends on. Remove one reference."
-            % shown(cyc))
-    out.sort(key=lambda v: v.line or 0)
-    return out
-
-
-@rule("task-dependencies", "tasks.md Depends on: references exist and the dependency graphs have no cycle",
-      '.agents/skills/openspec-linear-sync/SKILL.md, section "Dependencies"')
-def check_task_dependencies(root):
-    out = []
-    active, _ = list_change_dirs(root)
-    for change in active:
-        text = read_text(change / "tasks.md")
-        if text is not None:
-            out.extend(check_tasks_text(relpath(root, change / "tasks.md"), text))
-    return out
+@rule("tracker", "openspec/config.yaml sets x-tracker to linear, github or none",
+      "docs/agents/issue-tracker.md")
+def check_tracker(root):
+    rel = "openspec/config.yaml"
+    text = read_text(Path(root) / rel)
+    if text is None:
+        return []
+    found = TRACKER_RE.search(text)
+    if not found:
+        return [Violation("tracker", rel, None,
+                          "no top-level `x-tracker:`. Add `x-tracker: none` (or linear, github) under `schema:`.")]
+    value = found.group(1).strip("'\"")
+    if value not in TRACKERS:
+        line = text[:found.start()].count("\n") + 1
+        return [Violation("tracker", rel, line,
+                          '`x-tracker: %s` is not a tracker. Use one of: %s.' % (value, ", ".join(TRACKERS)))]
+    return []
 
 
 # ---------------------------------------------------------------------------------------------
@@ -587,184 +382,13 @@ def check_task_dependencies(root):
 MCP_FILES = (".mcp.json", ".codex/config.toml", "opencode.json")
 
 
-def split_toml_key(header):
-    parts, buf, quote = [], "", None
-    for ch in header:
-        if quote:
-            if ch == quote:
-                quote = None
-            else:
-                buf += ch
-        elif ch in ("'", '"'):
-            quote = ch
-        elif ch == ".":
-            parts.append(buf.strip())
-            buf = ""
-        else:
-            buf += ch
-    parts.append(buf.strip())
-    return parts
-
-
-class UnsupportedToml(Exception):
-    """The fallback TOML parser meets a construct it does not implement: only Python 3.11+ can parse this file."""
-
-
-class _Escaped(str):
-    """A basic string that contains a backslash: the fallback parser keeps its raw text and cannot decode it."""
-
-
-BARE_KEY = r"[A-Za-z0-9_-]+"
-_KEY_PART = r"""(?:%s|"[^"]*"|'[^']*')""" % BARE_KEY
-KEY_PATH = r"(%s(?:\s*\.\s*%s)*)" % (_KEY_PART, _KEY_PART)
-KEY_RE = re.compile(r"^\s*" + KEY_PATH + r"\s*=\s*(.*)$")
-INLINE_KEY_RE = re.compile(r"\s*" + KEY_PATH + r"\s*=")
-HEADER_RE = re.compile(r"^\s*\[([^\[\]]+)\]\s*(#.*)?$")
-
-
-def _toml_scalar(text, i):
-    """(string or None, index after it) for the single-line value at text[i]: strings are returned, the
-    rest is skipped up to a top-level comma or closing brace."""
-    if text[i:i + 1] in ('"', "'"):
-        quote, j = text[i], i + 1
-        while j < len(text) and text[j] != quote:
-            j += 2 if quote == '"' and text[j] == "\\" else 1
-        raw = text[i + 1:j]
-        return (_Escaped(raw) if quote == '"' and "\\" in raw else raw), j + 1
-    depth, j = 0, i
-    while j < len(text):
-        ch = text[j]
-        if ch in "\"'":
-            j = _toml_scalar(text, j)[1]
-            continue
-        if ch in "[{":
-            depth += 1
-        elif ch in "]}" and depth == 0:
-            break
-        elif ch in "]}":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            break
-        elif ch == "#" and depth == 0:
-            break
-        j += 1
-    return None, j
-
-
-def _toml_value(text, i):
-    """(value, next index): an inline table becomes a dict, a string a str, anything else None."""
-    while text[i:i + 1] in (" ", "\t"):
-        i += 1
-    if text[i:i + 1] != "{":
-        return _toml_scalar(text, i)
-    table, i = {}, i + 1
-    while i < len(text):
-        while text[i:i + 1] in (" ", "\t", ","):
-            i += 1
-        if text[i:i + 1] in ("}", ""):
-            return table, i + 1
-        m = INLINE_KEY_RE.match(text, i)
-        if not m:
-            return table, len(text)
-        value, i = _toml_value(text, m.end())
-        _toml_assign(table, split_toml_key(m.group(1)), value)
-    return table, i
-
-
-def _toml_table(data, parts):
-    for part in parts:
-        child = data.get(part)
-        if not isinstance(child, dict):
-            child = data[part] = {}
-        data = child
-
-
-def _toml_assign(data, parts, value):
-    node = data
-    for part in parts[:-1]:
-        child = node.get(part)
-        if not isinstance(child, dict):
-            child = node[part] = {}
-        node = child
-    if isinstance(value, dict) and isinstance(node.get(parts[-1]), dict):
-        node[parts[-1]].update(value)
-    else:
-        node[parts[-1]] = value
-
-
-def _servers_of(data):
-    section = data.get("mcp_servers") if isinstance(data, dict) else None
+def parse_codex_servers(text):
+    """{server: url or None} from the text of .codex/config.toml; raises ValueError when it is not valid TOML."""
+    section = tomllib.loads(text).get("mcp_servers")
     if not isinstance(section, dict):
         return {}
-    for cfg in section.values():
-        if isinstance(cfg, dict) and isinstance(cfg.get("url"), _Escaped):
-            raise UnsupportedToml("escape sequences in a url")
     return {name: (cfg.get("url") if isinstance(cfg, dict) and isinstance(cfg.get("url"), str) else None)
             for name, cfg in section.items()}
-
-
-def strip_toml_comments(text):
-    """`text` without comments: a `#` outside a string, up to the end of its line."""
-    lines = []
-    for line in text.splitlines():
-        quote, i = None, 0
-        while i < len(line):
-            ch = line[i]
-            if quote:
-                if ch == "\\" and quote == '"':
-                    i += 1
-                elif ch == quote:
-                    quote = None
-            elif ch in "\"'":
-                quote = ch
-            elif ch == "#":
-                line = line[:i]
-                break
-            i += 1
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def parse_codex_servers_lines(text):
-    """{server: url or None} read line by line, for Pythons without tomllib. Understands `[a.b]` tables,
-    dotted keys, inline tables and bare or quoted names; it does not detect invalid TOML. It does not guess
-    at what it does not implement: triple-quoted strings, `[[mcp_servers...]]` headers and escapes in a url or in
-    a name raise UnsupportedToml."""
-    uncommented = strip_toml_comments(text)   # a comment may say anything, `'''` included
-    if '"""' in uncommented or "'''" in uncommented:
-        raise UnsupportedToml("triple-quoted strings")
-    data = {}
-    prefix = []
-    for line in text.splitlines():
-        array = re.match(r"^\s*\[\[(.*?)\]\]", line)
-        if array and split_toml_key(array.group(1))[0] == "mcp_servers":
-            raise UnsupportedToml("array-of-tables headers")
-        m = HEADER_RE.match(line)
-        if m:
-            if "\\" in m.group(1):
-                raise UnsupportedToml("escapes in a name")
-            prefix = split_toml_key(m.group(1))
-            _toml_table(data, prefix)
-            continue
-        if re.match(r"^\s*\[", line):
-            prefix = None  # not a table header we understand: its keys are not servers
-            continue
-        m = KEY_RE.match(line)
-        if m and prefix is not None:
-            if "\\" in m.group(1):
-                raise UnsupportedToml("escapes in a name")
-            value, _ = _toml_value(m.group(2), 0)
-            _toml_assign(data, prefix + split_toml_key(m.group(1)), value)
-    return _servers_of(data)
-
-
-def parse_codex_servers_tomllib(text):
-    """Same result through tomllib; raises ValueError for text that is not valid TOML."""
-    return _servers_of(tomllib.loads(text))
-
-
-def parse_codex_servers(text):
-    return parse_codex_servers_tomllib(text) if tomllib is not None else parse_codex_servers_lines(text)
 
 
 def mcp_servers(root):
@@ -794,15 +418,14 @@ def mcp_servers(root):
 
 
 @rule("mcp-parity", "every MCP server is declared, with the same url, in .mcp.json, .codex/config.toml and opencode.json",
-      'README.md, section "MCP servers"', tools=True)
+      'docs/reference/workspace.md, section "MCP servers"', tools=True)
 def check_mcp_parity(root, require_tools=False):
     out = []
-    try:
-        declared, errors = mcp_servers(root)
-    except UnsupportedToml as exc:
+    if tomllib is None and (Path(root) / ".codex" / "config.toml").is_file():
         return tool_missing("mcp-parity", require_tools,
-                            ".codex/config.toml uses TOML this Python cannot read without guessing (%s): "
-                            "it needs Python 3.11+ to be parsed" % exc, ".codex/config.toml")
+                            "reading .codex/config.toml needs Python 3.11+ (this is Python %d.%d)" % sys.version_info[:2],
+                            ".codex/config.toml")
+    declared, errors = mcp_servers(root)
     for rel, err in sorted(errors.items()):
         out.append(Violation("mcp-parity", rel, None, "file %s. Fix the syntax." % err))
     names = sorted(set(n for servers in declared.values() for n in servers))
@@ -867,7 +490,7 @@ LN_HELP = ("Expose it with `mkdir -p .claude/skills/{n} && ln -s ../../../.agent
            "a skill with references/ gets a directory link instead: `ln -s ../../.agents/skills/{n} .claude/skills/{n}`.")
 
 
-@rule("skill-exposure", "custom skills have valid frontmatter, are exposed to Claude Code, and nothing is a broken link",
+@rule("skill-exposure", "skills have valid frontmatter, are exposed to Claude Code, and nothing is a broken link",
       'docs/agents/workspace-changes.md, section "Custom skills"')
 def check_skill_exposure(root):
     out = []
@@ -978,13 +601,11 @@ def check_tracked_secrets(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 7. generated-skills
+# 7. openspec-validate
 # ---------------------------------------------------------------------------------------------
 
 PIN_RE = re.compile(r"^\d+\.\d+\.\d+$")
 PIN_FILE = "openspec/cli-version"
-PROFILE_FILE = "openspec/cli-profile.json"
-GENERATED_TOPS = (".agents", ".claude")
 
 
 def pinned_openspec_version(root):
@@ -1001,30 +622,6 @@ def pinned_openspec_version(root):
     return version, None
 
 
-def is_generated_skill(md):
-    """True when the frontmatter has `author: openspec` under `metadata:`."""
-    lines = frontmatter(read_text(md)) or ()
-    in_metadata = False
-    for line in lines:
-        if re.match(r"^metadata:\s*$", line):
-            in_metadata = True
-        elif in_metadata and re.match(r"^\s+author:\s*[\"']?openspec[\"']?\s*$", line):
-            return True
-        elif in_metadata and line.strip() and not line[:1].isspace():
-            in_metadata = False
-    return False
-
-
-def generated_skill_files(root):
-    """Relative paths of .agents/skills/*/SKILL.md written by the OpenSpec CLI."""
-    found = []
-    for skill in skill_entries(Path(root) / ".agents" / "skills"):
-        md = skill / "SKILL.md"
-        if md.is_file() and is_generated_skill(md):
-            found.append(relpath(root, md))
-    return found
-
-
 def installed_openspec_version():
     exe = shutil.which("openspec")
     if not exe:
@@ -1037,160 +634,45 @@ def installed_openspec_version():
     return res.stdout.strip() or None if res.returncode == 0 else None
 
 
+def version_satisfies(installed, minimum):
+    """True when `installed` is `minimum` or newer within the same major version."""
+    found = re.match(r"^(\d+)\.(\d+)\.(\d+)", installed or "")
+    if not found:
+        return False
+    have, need = tuple(int(n) for n in found.groups()), tuple(int(n) for n in minimum.split("."))
+    return have[0] == need[0] and have >= need
+
+
 def tool_missing(rule_id, require_tools, reason, path="."):
     if require_tools:
         return [Violation(rule_id, path, None, reason)]
     raise Skip(reason)
 
 
-def _excluded(name):
-    return "--" in name or name == "settings.local.json"
-
-
-def _copy_ignore(_directory, names):
-    return [n for n in names if _excluded(n)]
-
-
-def _snapshot(root):
-    """{relative path: (kind, content)} of .agents and .claude: symlinks are not followed."""
-    snap = {}
-    for top in GENERATED_TOPS:
-        base = Path(root) / top
-        if not base.is_dir() or base.is_symlink():
-            continue
-        snap[top] = ("dir", None)
-        for dirpath, dirnames, filenames in os.walk(str(base)):
-            dirnames[:] = sorted(d for d in dirnames if not _excluded(d))
-            for name in sorted(dirnames + filenames):
-                if _excluded(name):
-                    continue
-                path = Path(dirpath) / name
-                rel = path.relative_to(root).as_posix()
-                if path.is_symlink():
-                    snap[rel] = ("link", os.readlink(str(path)))
-                elif path.is_dir():
-                    snap[rel] = ("dir", None)
-                else:
-                    try:
-                        snap[rel] = ("file", path.read_bytes())
-                    except OSError:
-                        snap[rel] = ("file", None)
-            dirnames[:] = [d for d in dirnames if not (Path(dirpath) / d).is_symlink()]
-    return snap
-
-
-def _compare_generated(root, fresh):
-    """Violations for every path whose content, kind or presence differs between the two trees."""
-    old, new = _snapshot(root), _snapshot(fresh)
-    out, reported = [], []
-    for rel in sorted(set(old) | set(new)):
-        if any(rel.startswith(r + "/") for r in reported):
-            continue
-        if rel in old and rel in new:
-            if old[rel] == new[rel]:
-                continue
-            what = ("differs from `openspec update` output: a generated file was edited by hand, or generated with another "
-                    "version or profile.")
-        elif rel in new:
-            what = "is created by `openspec update` but missing here."
-        else:
-            what = "is deleted by `openspec update` but present here: a stale generated file."
-        reported.append(rel)
-        out.append(Violation("generated-skills", rel, None, "%s Run `make openspec` and commit the result." % what))
-    return out
-
-
-def _stale_commands(root, reported):
-    """Leftover /opsx command files. `openspec update` keeps the ones that were edited by hand."""
-    seen = [v.path for v in reported]
-    out = []
-    base = Path(root) / ".claude" / "commands" / "opsx"
-    if not base.is_dir() or base.is_symlink():
-        return out
-    for path in sorted(p for p in base.rglob("*") if not p.is_dir()):
-        rel = relpath(root, path)
-        if any(rel == r or rel.startswith(r + "/") for r in seen):
-            continue
-        out.append(Violation("generated-skills", rel, None,
-                             "stale /opsx command file: OpenSpec 2.x installs skills only, so the commands are gone. "
-                             "Delete it (`git rm -r .claude/commands/opsx`) and run `make openspec`."))
-    return out
-
-
-@rule("generated-skills", "running `make openspec` on a clean copy changes nothing under .agents/ and .claude/",
-      'docs/agents/workspace-changes.md, section "Generated files" (never edited by hand)', tools=True)
-def check_generated_skills(root, require_tools=False):
-    root = Path(root)
-    generated = generated_skill_files(root)
-    pin_present = (root / PIN_FILE).is_file()
-    profile_present = (root / PROFILE_FILE).is_file()
-    if not generated and not pin_present and not profile_present:
-        return []
-    out = []
-    if not pin_present:
-        out.append(Violation("generated-skills", PIN_FILE, None,
-                             "missing. It pins the OpenSpec CLI version the generated skills come from. Create it with the version "
-                             "alone (for example `echo 2.1.1 > %s`) and run `make openspec`." % PIN_FILE))
-    if not profile_present:
-        out.append(Violation("generated-skills", PROFILE_FILE, None,
-                             "missing. It pins the CLI profile the generated skills come from. Create it with "
-                             "`{\"profile\": \"custom\", \"workflows\": [...]}` (see README.md, section \"Checks\") "
-                             "and run `make openspec`."))
-    if out:
-        return out
-    problem = require_pinned_cli("generated-skills", root, require_tools)
-    if problem is not None:
-        return problem
-    updater = Path(__file__).resolve().parent / "openspec-update.sh"
-    tmp = tempfile.mkdtemp(prefix="check-openspec-")
-    try:
-        for top in GENERATED_TOPS:
-            if (root / top).is_dir():
-                shutil.copytree(str(root / top), os.path.join(tmp, top), symlinks=True, ignore=_copy_ignore)
-        os.makedirs(os.path.join(tmp, "openspec", "changes"))
-        os.makedirs(os.path.join(tmp, "openspec", "specs"))
-        for name in ("config.yaml", "cli-profile.json", "cli-version"):
-            if (root / "openspec" / name).is_file():
-                shutil.copy2(str(root / "openspec" / name), os.path.join(tmp, "openspec", name))
-        res = subprocess.run(["bash", str(updater), tmp], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT, universal_newlines=True, timeout=300)
-        if res.returncode != 0:
-            tail = " | ".join(res.stdout.strip().splitlines()[-5:])
-            return [Violation("generated-skills", "scripts/openspec-update.sh", None,
-                              "regeneration failed (exit %d): %s" % (res.returncode, tail))]
-        out = _compare_generated(root, Path(tmp))
-        return out + _stale_commands(root, out)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-# ---------------------------------------------------------------------------------------------
-# 8. openspec-validate
-# ---------------------------------------------------------------------------------------------
-
-def require_pinned_cli(rule_id, root, require_tools):
-    """Violations when the pin file is invalid or the CLI is not at the pinned version; raises Skip
-    when `require_tools` is off. Returns None when the pinned CLI is installed."""
+def require_cli(rule_id, root, require_tools):
+    """Violations when openspec/cli-version is invalid or the CLI is older than it or of another major
+    version; raises Skip when `require_tools` is off. Returns None when the installed CLI will do."""
     pin, err = pinned_openspec_version(root)
     if pin is None:
         return [Violation(rule_id, PIN_FILE, None,
                           "invalid: %s. Write the version number alone, for example 2.1.1." % err)]
     installed = installed_openspec_version()
-    if installed != pin:
+    if not version_satisfies(installed, pin):
+        major = pin.split(".")[0]
         return tool_missing(rule_id, require_tools,
-                            "openspec %s required (pinned in %s), found %s. Install it: npm i -g @fission-ai/openspec@%s"
-                            % (pin, PIN_FILE, installed or "none", pin))
+                            "openspec %s or a newer %s.x required (%s), found %s. Install it: npm i -g @fission-ai/openspec@%s"
+                            % (pin, major, PIN_FILE, installed or "none", pin))
     return None
 
 
 @rule("openspec-validate", "`openspec validate --all --strict` passes for every change and spec",
-      "openspec/config.yaml", tools=True)
+      "docs/agents/openspec.md", tools=True)
 def check_openspec_validate(root, require_tools=False):
     root = Path(root)
     if not (root / "openspec").is_dir():
         return []
     if (root / PIN_FILE).is_file():
-        problem = require_pinned_cli("openspec-validate", root, require_tools)
+        problem = require_cli("openspec-validate", root, require_tools)
         if problem is not None:
             return problem
     exe = shutil.which("openspec")
@@ -1212,7 +694,7 @@ def check_openspec_validate(root, require_tools=False):
 
 
 # ---------------------------------------------------------------------------------------------
-# 9. guardrails
+# 8. guardrails
 # ---------------------------------------------------------------------------------------------
 
 GUARD_SCRIPT = "scripts/guard.py"
@@ -1294,19 +776,19 @@ def has_guard_plugin(text, agent_flag):
 
 
 @rule("guardrails", "scripts/guard.py is executable and each agent's hook or plugin runs it before shell tool calls",
-      'README.md, section "Guardrails"')
+      'docs/reference/guardrails.md, section "Guardrails"')
 def check_guardrails(root):
     root = Path(root)
     out = []
     script = root / GUARD_SCRIPT
     if not script.is_file():
         out.append(Violation("guardrails", GUARD_SCRIPT, None,
-                             "missing. Restore it from the harness template; every agent hook calls it."))
+                             "missing. Restore it from the harness repository; every agent hook calls it."))
     elif not os.access(str(script), os.X_OK):
         out.append(Violation("guardrails", GUARD_SCRIPT, None, "is not executable. Run `chmod +x %s`." % GUARD_SCRIPT))
     for agent, rel, kind, flag in GUARD_WIRING:
         path = root / rel
-        restore = "Restore it from the harness template so %s runs %s before each tool call." % (agent, GUARD_SCRIPT)
+        restore = "Restore it from the harness repository so %s runs %s before each tool call." % (agent, GUARD_SCRIPT)
         if not path.is_file():
             out.append(Violation("guardrails", rel, None, "missing. " + restore))
             continue
@@ -1327,7 +809,7 @@ def check_guardrails(root):
 
 
 # ---------------------------------------------------------------------------------------------
-# 10. agents-map
+# 9. agents-map
 # ---------------------------------------------------------------------------------------------
 
 AGENTS_MAP_LIMIT = 6000
@@ -1459,8 +941,8 @@ def split_link(raw):
     return path, urllib.parse.unquote(fragment)
 
 
-@rule("agents-map", "AGENTS.md is a map of at most 6000 bytes, links every docs/agents/*.md, and relative links resolve",
-      'README.md, section "AGENTS.md is a map"')
+@rule("agents-map", "AGENTS.md is a map of at most 6000 bytes, links every docs/agents/*.md, and relative links in the docs resolve",
+      'docs/reference/checks.md, section "AGENTS.md is a map"')
 def check_agents_map(root):
     out = []
     root = Path(root)
@@ -1475,8 +957,11 @@ def check_agents_map(root):
                              % (size, AGENTS_MAP_LIMIT)))
     docs_dir = root / "docs" / "agents"
     docs = sorted(docs_dir.glob("*.md")) if docs_dir.is_dir() else []
+    reference_dir = root / "docs" / "reference"
+    others = [p for p in [root / "README.md"] if p.is_file()]
+    others += sorted(reference_dir.glob("*.md")) if reference_dir.is_dir() else []
     linked = set()
-    for md in [agents] + docs:
+    for md in [agents] + docs + others:
         text = read_text(md)
         if text is None:
             continue
@@ -1527,7 +1012,9 @@ def main(argv=None):
     parser.add_argument("--require-tools", action="store_true",
                         help="a rule that cannot run for lack of a tool is a violation, not a skip")
     parser.add_argument("--openspec-version", action="store_true",
-                        help="print the pinned OpenSpec CLI version and exit")
+                        help="print the OpenSpec CLI version of openspec/cli-version (the one CI installs) and exit")
+    parser.add_argument("--openspec-ok", action="store_true",
+                        help="exit 0 when the installed OpenSpec CLI is that version or a newer one of the same major")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
@@ -1545,6 +1032,17 @@ def main(argv=None):
             return 2
         print(version)
         return 0
+    if args.openspec_ok:
+        version, err = pinned_openspec_version(root)
+        if version is None:
+            print("check: cannot determine the OpenSpec version: %s" % err, file=sys.stderr)
+            return 2
+        installed = installed_openspec_version()
+        if version_satisfies(installed, version):
+            return 0
+        print("openspec %s or a newer %s.x required (%s), found %s"
+              % (version, version.split(".")[0], PIN_FILE, installed or "none"), file=sys.stderr)
+        return 1
     if not root.is_dir():
         print("check: --root %s is not a directory" % args.root, file=sys.stderr)
         return 2

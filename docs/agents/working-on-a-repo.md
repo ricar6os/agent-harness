@@ -16,6 +16,8 @@ and verify with `make check` and `make test` instead of `make repo-check`.
 3. Branch inside the repo; never commit to its default branch. In a meta worktree, repos start
    detached at `origin/<branch>`:
    `git -C repos/<name> checkout -b <type>/<short-slug>` (for example `feat/…`, `fix/…`, `chore/…`).
+   For a phase of an OpenSpec change the slug is `<change>-phase-<N>`, the same in every repo of
+   the phase.
 4. Make the change and run `make repo-check REPO=<name>`. When the manifest declares no `check` for
    the repo, find its command (its `AGENTS.md`, Makefile, package.json, pyproject.toml, CI), run
    it, and propose adding it as `check` in `repos.json`. Commit inside the repo, with a message
@@ -25,9 +27,12 @@ and verify with `make check` and `make test` instead of `make repo-check`.
 5. Push, then open the PR from inside the repo:
    `git -C repos/<name> push -u origin HEAD`, then use the `create-pull-request` skill (title,
    body, `gh pr create`). Pushing to a branch that already has an open PR: use the skill again.
-6. A change spanning several repos: one PR per repo, in the deployment order of the change's design
-   (per phase when it ships in phases). Record each branch and PR in the change's `tasks.md`; the
-   skill links the sibling PRs of the same phase.
+6. A phase of an OpenSpec change: apply implements one phase of `plan.md` per run, with one
+   commit per repo, and stops. Then open one PR per repo of that phase, in the order of the phase's
+   `**Repos:**` line; the `create-pull-request` skill records each PR under the phase and links the
+   sibling PRs. This workspace repo is one more repo of every phase, and the last: its branch
+   carries the change's files (`plan.md` with the checked tasks and the PR links), and its PR is
+   opened after the others.
 7. Do not merge PRs, force-push, rewrite history or delete branches unless the user asks.
 
 ## Commits & PRs
@@ -37,8 +42,13 @@ Applies to every commit and PR, inside `repos/<name>` and in this meta repo.
 - Commit messages and PR titles follow [Conventional Commits](https://www.conventionalcommits.org/):
   `<type>(<scope>): <description>`, with `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `ci`,
   `build` or `perf`; scope optional.
-- PR title only: with an assigned task (a Linear issue id, for example `ABC-123`), the id is the
-  **first word of the description**: `feat(login): ABC-123 add magic-link sign-in`. No task
-  assigned: a plain description, `fix(api): handle empty payload`. Commits never carry the id.
+- How a PR names its phase's issue depends on `x-tracker` in `openspec/config.yaml`:
+  - `linear`: the issue id is the **first word of the title's description**:
+    `feat(login): ABC-123 add magic-link sign-in`.
+  - `github`: no id in the title; the body says `Part of <owner>/<repo>#13` (never `Closes`, a
+    phase can have PRs in several repos).
+  - `none`, or no issue: a plain title, `fix(api): handle empty payload`.
+
+  Commits never carry an issue reference.
 - The PR body is a **briefing** for a teammate who has not opened the code. Build title and body
   with the `create-pull-request` skill.

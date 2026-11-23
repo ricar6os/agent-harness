@@ -17,26 +17,6 @@ _spec = importlib.util.spec_from_file_location("check", str(REPO / "scripts" / "
 check = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(check)
 
-TASKS = """\
-## 1. Build
-
-Objective: build it.
-
-- [ ] 1.1 First
-- [ ] 1.2 Second
-  - Depends on: 1.1
-
-## 2. Release
-
-Objective: ship it.
-
-Depends on: 1
-
-- [ ] 2.1 Deploy
-  - Depends on: 1.2
-"""
-
-
 def write(root, rel, text=""):
     path = Path(root) / rel
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -91,10 +71,11 @@ def make_workspace(parent):
     link.parent.mkdir(parents=True)
     os.symlink("../../../.agents/skills/demo/SKILL.md", str(link))
     write(root, "openspec/changes/add-x/.openspec.yaml",
-          "schema: spec-driven\nx-product: shop\nx-linear-project:\n  id: p-1\n  url: https://linear.app/p-1\nx-linear-sync-version: 2\n")
+          "schema: spec-plan\nx-product: shop\nx-linear-project:\n  id: p-1\n  url: https://linear.app/p-1\n")
     write(root, "openspec/changes/add-x/specs/shop/orders/spec.md", "## ADDED Requirements\n")
-    write(root, "openspec/changes/add-x/tasks.md", TASKS)
+    write(root, "openspec/changes/add-x/plan.md", "# Plan\n")
     write(root, "openspec/specs/shop/orders/spec.md", "# orders\n")
+    write(root, "openspec/config.yaml", "schema: spec-plan\nx-tracker: linear\n")
     write(root, "env/README.md", "env\n")
     git(root, "init", "-q")
     git(root, "add", "-A")
@@ -275,20 +256,43 @@ class ChangeProductTests(Base):
         self.assertViolation(self.rule("change-product"), "change-product", "missing .openspec.yaml")
 
     def test_no_product(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-driven\n")
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-plan\n")
         self.assertViolation(self.rule("change-product"), "change-product", "no top-level `x-product: <slug>`")
 
     def test_unknown_product(self):
         write(self.ws, "openspec/changes/add-x/.openspec.yaml", 'x-product: "billing"\n')
         self.assertViolation(self.rule("change-product"), "change-product", 'product "billing" is not in repos.json')
 
-    def test_membership_skipped_without_known_products(self):
-        write(self.ws, "repos.json", json.dumps({"org": "a", "repos": []}))
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "x-product: billing\n")
+    def without_products(self):
+        write(self.ws, "repos.json", json.dumps({"org": "a", "repos": [
+            {"name": "api", "url": "git@github.com:acme/api.git"}]}))
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-plan\n")
         shutil.rmtree(str(self.ws / "openspec/changes/add-x/specs/shop"))
-        write(self.ws, "openspec/changes/add-x/specs/billing/x/spec.md")
-        write(self.ws, "openspec/specs/anything/x/spec.md")
+        shutil.rmtree(str(self.ws / "openspec/specs/shop"))
+
+    def test_without_products_specs_start_with_capability(self):
+        self.without_products()
+        write(self.ws, "openspec/changes/add-x/specs/orders/spec.md")
+        write(self.ws, "openspec/specs/orders/spec.md")
         self.assertClean(self.rule("change-product"))
+
+    def test_without_products_openspec_yaml_is_optional(self):
+        self.without_products()
+        (self.ws / "openspec/changes/add-x/.openspec.yaml").unlink()
+        self.assertClean(self.rule("change-product"))
+
+    def test_without_products_x_product_is_reported(self):
+        self.without_products()
+        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "x-product: shop\n")
+        self.assertViolation(self.rule("change-product"), "change-product", "repos.json declares no products. Remove the key")
+
+    def test_without_products_product_level_spec_is_reported(self):
+        self.without_products()
+        write(self.ws, "openspec/changes/add-x/specs/shop/orders/spec.md")
+        write(self.ws, "openspec/specs/shop/orders/spec.md")
+        vs = self.rule("change-product")
+        self.assertViolation(vs, "change-product", "delta spec must sit at specs/<capability>/spec.md")
+        self.assertViolation(vs, "change-product", "main spec must sit at openspec/specs/<capability>/spec.md")
 
     def test_delta_spec_depth(self):
         write(self.ws, "openspec/changes/add-x/specs/orders/spec.md")
@@ -306,44 +310,21 @@ class ChangeProductTests(Base):
         write(self.ws, "openspec/specs/billing/invoices/spec.md")
         self.assertViolation(self.rule("change-product"), "change-product", 'main spec directory "billing" is not a product')
 
-    def test_legacy_keys_each_reported_with_replacement(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml",
-              "schema: spec-driven\nx-product: shop\nlinear_project:\n  id: p-9\nlinear_sync_version: 2\n")
-        vs = self.rule("change-product")
-        self.assertEqual(2, len(vs), vs)
-        self.assertTrue(any("`linear_project`" in v.message and "`x-linear-project`" in v.message for v in vs))
-        self.assertTrue(any("`linear_sync_version`" in v.message and "`x-linear-sync-version`" in v.message for v in vs))
-        self.assertTrue(all("OpenSpec 2 rejects unknown keys" in v.message for v in vs))
-
-    def test_legacy_product_reports_only_migration(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "schema: spec-driven\nproduct: shop\n")
-        vs = self.rule("change-product")
-        self.assertEqual(1, len(vs), vs)
-        self.assertIn("`product` is the old key name. Rename it to `x-product`", vs[0].message)
-
-    def test_legacy_and_new_product_both_present(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "x-product: shop\nproduct: shop\n")
-        vs = self.rule("change-product")
-        self.assertEqual(1, len(vs), vs)
-        self.assertIn("Rename it to `x-product`", vs[0].message)
-
-    def test_archived_legacy_keys_are_history(self):
-        write(self.ws, "openspec/changes/archive/2026-01-01-old/.openspec.yaml",
-              "product: shop\nlinear_project:\n  id: p-7\nlinear_sync_version: 2\n")
-        self.assertClean(self.rule("change-product"))
-
-    def test_linear_project_shared_with_archived_legacy_change(self):
-        write(self.ws, "openspec/changes/archive/2026-01-01-old/.openspec.yaml", "product: shop\nlinear_project:\n  id: p-1\n")
-        vs = [v for v in self.rule("change-product") if "p-1" in v.message]
-        self.assertEqual(1, len(vs))
-        self.assertIn("x-linear-project.id p-1", vs[0].message)
-
     def test_linear_project_shared_with_archived_change(self):
         write(self.ws, "openspec/changes/archive/2026-01-01-old/.openspec.yaml", "x-product: shop\nx-linear-project:\n  id: p-1\n")
         vs = [v for v in self.rule("change-product") if "p-1" in v.message]
         self.assertEqual(1, len(vs))
         self.assertIn("add-x", vs[0].message)
         self.assertIn("2026-01-01-old", vs[0].message)
+
+    def test_github_parent_issue_shared_between_changes(self):
+        for name in ("add-x", "add-y"):
+            write(self.ws, "openspec/changes/%s/.openspec.yaml" % name,
+                  "x-product: shop\nx-github-issue:\n  repo: acme/meta\n  number: 12\n  url: https://github.com/acme/meta/issues/12\n")
+        vs = self.rule("change-product")
+        self.assertViolation(vs, "change-product", "x-github-issue acme/meta#12 is used by 2 changes")
+        write(self.ws, "openspec/changes/add-y/.openspec.yaml", "x-product: shop\nx-github-issue:\n  repo: acme/meta\n  number: 13\n")
+        self.assertClean(self.rule("change-product"))
 
     def test_distinct_linear_projects_pass(self):
         write(self.ws, "openspec/changes/archive/old/.openspec.yaml", "x-product: shop\nx-linear-project:\n  id: p-2\n")
@@ -356,171 +337,53 @@ class ChangeProductTests(Base):
         parsed = check.parse_simple_yaml('"x-product": shop\n\'n\':\n  "id": q\n')
         self.assertEqual({"x-product": "shop", "n": {"id": "q"}}, parsed)
 
-    def test_quoted_legacy_key_gets_the_migration_message(self):
-        write(self.ws, "openspec/changes/add-x/.openspec.yaml", "'product': shop\n")
-        vs = self.rule("change-product")
-        self.assertEqual(1, len(vs), vs)
-        self.assertIn("`product` is the old key name. Rename it to `x-product`", vs[0].message)
-
     def test_yaml_parser(self):
         parsed = check.parse_simple_yaml("a: 'x'\nb: y # c\nn:\n  id: \"q\"\n  url: https://h/p\n")
         self.assertEqual({"a": "x", "b": "y", "n": {"id": "q", "url": "https://h/p"}}, parsed)
 
 
-class TaskDependencyTests(Base):
-    def run_tasks(self, text):
-        write(self.ws, "openspec/changes/add-x/tasks.md", text)
-        return self.rule("task-dependencies")
-
+class TrackerTests(Base):
     def test_green(self):
-        self.assertClean(self.rule("task-dependencies"))
+        self.assertClean(self.rule("tracker"))
 
-    def test_duplicate_group(self):
-        self.assertViolation(self.run_tasks(TASKS + "\n## 2. Again\n"), "task-dependencies", "group 2 is declared twice")
+    def test_each_tracker_is_valid(self):
+        for value in ("linear", "github", "none", "'none'  # comment"):
+            write(self.ws, "openspec/config.yaml", "schema: spec-plan\nx-tracker: %s\n" % value)
+            self.assertClean(self.rule("tracker"))
 
-    def test_duplicate_task(self):
-        self.assertViolation(self.run_tasks(TASKS + "- [ ] 2.1 Again\n"), "task-dependencies", "task 2.1 is declared twice")
+    def test_missing(self):
+        write(self.ws, "openspec/config.yaml", "schema: spec-plan\n")
+        self.assertViolation(self.rule("tracker"), "tracker", "no top-level `x-tracker:`")
 
-    def test_task_under_other_group(self):
-        self.assertViolation(self.run_tasks("## 1. A\n\n- [ ] 2.1 Lost\n\n## 2. B\n"), "task-dependencies", "task 2.1 is under group 1")
+    def test_unknown(self):
+        write(self.ws, "openspec/config.yaml", "schema: spec-plan\nx-tracker: jira\n")
+        vs = self.rule("tracker")
+        self.assertViolation(vs, "tracker", "`x-tracker: jira` is not a tracker")
+        self.assertEqual(2, vs[0].line)
 
-    def test_task_before_any_group(self):
-        self.assertViolation(self.run_tasks("- [ ] 1.1 Lost\n"), "task-dependencies", "task 1.1 appears before any group heading")
+    def test_indented_key_is_not_top_level(self):
+        write(self.ws, "openspec/config.yaml", "schema: spec-plan\nrules:\n  x-tracker: linear\n")
+        self.assertViolation(self.rule("tracker"), "tracker", "no top-level")
 
-    def test_depends_without_task(self):
-        self.assertViolation(self.run_tasks("## 1. A\n\n  - Depends on: 1\n"), "task-dependencies", "has no task to attach to")
-
-    def test_malformed_ref(self):
-        vs = self.run_tasks("## 1. A\n\n- [ ] 1.1 T\n  - Depends on: x1, 1.2.3\n")
-        self.assertViolation(vs, "task-dependencies", 'malformed reference "x1"')
-        self.assertViolation(vs, "task-dependencies", 'malformed reference "1.2.3"')
-
-    def test_missing_ref_with_line_number(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1.2", "Depends on: 2.9"))
-        self.assertViolation(vs, "task-dependencies", "task 2.1 depends on 2.9, which does not exist. Fix the reference or remove it.")
-        self.assertEqual(16, [v for v in vs if "2.9" in v.message][0].line)
-
-    def test_missing_group_ref(self):
-        self.assertViolation(self.run_tasks(TASKS.replace("Depends on: 1\n", "Depends on: 7\n")), "task-dependencies",
-                             "group 2 depends on group 7, which does not exist")
-
-    def test_group_dependency_names_task(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1\n", "Depends on: 1.1\n"))
-        self.assertViolation(vs, "task-dependencies", "group dependencies name groups only")
-
-    def test_task_depends_on_itself(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1.1", "Depends on: 1.2"))
-        self.assertViolation(vs, "task-dependencies", "task 1.2 depends on itself")
-
-    def test_group_depends_on_itself(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1\n", "Depends on: 2\n"))
-        self.assertViolation(vs, "task-dependencies", "group 2 depends on itself")
-
-    def test_task_depends_on_own_group(self):
-        vs = self.run_tasks(TASKS.replace("Depends on: 1.1", "Depends on: 1"))
-        self.assertViolation(vs, "task-dependencies", "task 1.2 depends on its own group 1")
-
-    def test_group_cycle(self):
-        text = "## 1. A\n\nDepends on: 2\n\n- [ ] 1.1 a\n\n## 2. B\n\nDepends on: 1\n\n- [ ] 2.1 b\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "group dependencies form a cycle: 1 → 2 → 1")
-        self.assertEqual(1, len(vs), "the group cycle must not be reported again as a task deadlock")
-
-    def test_task_cycle(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 1.2\n- [ ] 1.2 b\n  - Depends on: 1.1\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "1.1 → 1.2 → 1.1")
-        self.assertEqual(1, len(vs))
-
-    def test_cycle_through_group_expansion(self):
-        text = "## 1. A\n\nDepends on: 2\n\n- [ ] 1.1 a\n\n## 2. B\n\n- [ ] 2.1 b\n  - Depends on: 1.1\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "1.1 → 2.1 → 1.1")
-
-    def test_task_depending_on_group_expands(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 2\n\n## 2. B\n\n- [ ] 2.1 b\n  - Depends on: 1.1\n"
-        self.assertViolation(self.run_tasks(text), "task-dependencies", "1.1 → 2.1 → 1.1")
-
-    def test_cycle_not_reported_for_missing_ref(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 1.9\n"
-        vs = self.run_tasks(text)
-        self.assertEqual(1, len(vs))
-        self.assertIn("does not exist", vs[0].message)
-
-    def test_deadlock_through_an_empty_group(self):
-        text = ("## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 3\n\n## 3. Empty\n\nDepends on: 1\n")
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "group 1 → 1.1 → group 3 → group 1")
-        self.assertEqual(1, len(vs))
-
-    def test_empty_group_without_a_loop_is_fine(self):
-        text = "## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 3\n\n## 3. Empty\n\nDepends on: 2\n\n## 2. B\n\n- [ ] 2.1 b\n"
-        self.assertClean(self.run_tasks(text))
-
-    def test_group_cycle_with_tasks_is_reported_once(self):
-        text = "## 1. A\n\nDepends on: 2\n\n- [ ] 1.1 a\n\n## 2. B\n\nDepends on: 1\n\n- [ ] 2.1 b\n"
-        self.assertEqual(1, len(self.run_tasks(text)))
-
-    def test_cycle_not_reported_for_own_group_reference(self):
-        vs = self.run_tasks("## 1. A\n\n- [ ] 1.1 a\n  - Depends on: 1\n")
-        self.assertEqual(1, len(vs))
-        self.assertIn("its own group", vs[0].message)
-
-    def test_nested_tilde_line_does_not_close_a_backtick_fence(self):
-        text = TASKS + "\n```markdown\n~~~\n```\n\n- [ ] 2.2 After\n  - Depends on: 8.8\n"
-        vs = self.run_tasks(text)
-        self.assertViolation(vs, "task-dependencies", "task 2.2 depends on 8.8, which does not exist")
-
-    def test_fence_closes_only_with_same_char_and_enough_length(self):
-        text = TASKS + "\n~~~~\n~~~\n- [ ] 9.9 y\n  - Depends on: 8.8\n~~~~\n\n- [ ] 2.2 After\n  - Depends on: 8.7\n"
-        vs = self.run_tasks(text)
-        self.assertEqual(["8.7"], [v.message.split("depends on ")[1].split(",")[0] for v in vs])
-
-    def test_multiline_html_comment_is_ignored(self):
-        text = TASKS + "\n<!--\nExample:\n- [ ] 9.9 y\n  - Depends on: 8.8\n## 9. z\n-->\n\n- [ ] 2.2 After\n  - Depends on: 8.7\n"
-        vs = self.run_tasks(text)
-        self.assertEqual(1, len(vs))
-        self.assertIn("8.7", vs[0].message)
-
-    def test_single_line_comment_and_inline_marker(self):
-        text = (TASKS + "\n<!-- - [ ] 9.9 y -->\n  <!-- one\n  - Depends on: 8.8\n  two -->\n"
-                "- [ ] 2.2 After <!-- in-progress -->\n  - Depends on: 8.7\n")
-        vs = self.run_tasks(text)
-        self.assertEqual(1, len(vs))
-        self.assertIn("task 2.2 depends on 8.7", vs[0].message)
-
-    def test_one_line_fence_snippet_is_not_a_fence(self):
-        text = TASKS + "\nUse ```bash``` here.\n```bash``` \n## 2. dup\n"
-        self.assertViolation(self.run_tasks(text), "task-dependencies", "group 2 is declared twice")
-
-    def test_tilde_fence_may_carry_a_backtick_in_its_info(self):
-        text = TASKS + "\n~~~ a`b\n## 2. dup\n~~~\n"
-        self.assertClean(self.run_tasks(text))
-
-    def test_unterminated_fence_is_reported_at_its_opening_line(self):
-        text = TASKS + "\n```bash\n## 2. dup\n"
-        vs = self.run_tasks(text)
-        opening = len(TASKS.splitlines()) + 2
-        self.assertViolation(vs, "task-dependencies", "never closed")
-        self.assertViolation(vs, "task-dependencies", "were not checked")
-        self.assertEqual([opening], [v.line for v in vs])
-
-    def test_unterminated_comment_is_reported_at_its_opening_line(self):
-        text = TASKS + "\n<!-- note\n## 2. dup\n"
-        vs = self.run_tasks(text)
-        opening = len(TASKS.splitlines()) + 2
-        self.assertViolation(vs, "task-dependencies", "never closed")
-        self.assertViolation(vs, "task-dependencies", "were not checked")
-        self.assertEqual([opening], [v.line for v in vs])
-
-    def test_closed_comment_and_fence_are_clean(self):
-        self.assertClean(self.run_tasks(TASKS + "\n<!--\n## 2. dup\n-->\n```\n## 2. dup\n```\n"))
-
-    def test_fenced_block_is_ignored(self):
-        text = TASKS + "\n```markdown\n## 9. x\n## 1. dup\n- [ ] 9.9 y\n  - Depends on: 8.8\n```\n"
-        self.assertClean(self.run_tasks(text))
+    def test_no_openspec_config(self):
+        (self.ws / "openspec/config.yaml").unlink()
+        self.assertClean(self.rule("tracker"))
 
 
+class McpParityWithoutTomllibTests(Base):
+    def test_python_without_tomllib_skips_or_violates(self):
+        with mock.patch.object(check, "tomllib", None):
+            with self.assertRaises(check.Skip) as ctx:
+                self.rule("mcp-parity")
+            self.assertIn("Python 3.11+", str(ctx.exception))
+            vs = self.rule("mcp-parity", require_tools=True)
+            self.assertViolation(vs, "mcp-parity", "Python 3.11+")
+            self.assertEqual([".codex/config.toml"], [v.path for v in vs])
+            (self.ws / ".codex/config.toml").unlink()
+            self.assertViolation(self.rule("mcp-parity"), "mcp-parity", "but not in .codex/config.toml")
+
+
+@unittest.skipIf(check.tomllib is None, "the mcp-parity rule needs Python 3.11+")
 class McpParityTests(Base):
     def test_green(self):
         self.assertClean(self.rule("mcp-parity"))
@@ -572,66 +435,12 @@ class McpParityTests(Base):
         "sub-table beside url": '[mcp_servers.linear-server]\nurl = "U"\n[mcp_servers.linear-server.env]\nurl = "x"\n',
     }
 
-    def test_toml_forms_fallback_parser(self):
+    def test_toml_forms_give_the_same_servers(self):
         for name, text in self.TOML_FORMS.items():
-            self.assertEqual({"linear-server": "U"}, check.parse_codex_servers_lines(text), name)
-
-    def test_toml_forms_agree_with_tomllib(self):
-        if check.tomllib is None:
-            self.assertEqual({}, check.parse_codex_servers_lines("[other]\nx = 1\n"))
-            return
-        for name, text in self.TOML_FORMS.items():
-            self.assertEqual(check.parse_codex_servers_lines(text), check.parse_codex_servers_tomllib(text), name)
+            self.assertEqual({"linear-server": "U"}, check.parse_codex_servers(text), name)
         extra = '[mcp_servers.a]\ncommand = "x"\n[mcp_servers.b.env]\nK = "v"\n[[other]]\nurl = "no"\n[x]\nurl = "no"\n'
-        self.assertEqual(check.parse_codex_servers_lines(extra), check.parse_codex_servers_tomllib(extra))
-        self.assertEqual({"a": None, "b": None}, check.parse_codex_servers_lines(extra))
-
-    UNSUPPORTED_TOML = {
-        "url inside a multi-line basic string": '[mcp_servers.a]\nurl = "U"\nnote = """\nurl = "other"\n"""\n',
-        "url inside a multi-line literal string": "[mcp_servers.a]\nnote = \'\'\'\nurl = 'other'\n\'\'\'\n",
-        "array of tables": '[[mcp_servers.a]]\nurl = "U"\n',
-        "escape in a url": '[mcp_servers.a]\nurl = "https://h/\\"x"\n',
-        "escape in a server name": '[mcp_servers."a\\"b"]\nurl = "U"\n',
-    }
-
-    def test_fallback_parser_refuses_what_it_does_not_implement(self):
-        for name, text in self.UNSUPPORTED_TOML.items():
-            with self.subTest(name):
-                with self.assertRaises(check.UnsupportedToml):
-                    check.parse_codex_servers_lines(text)
-
-    def test_fallback_parser_ignores_triple_quotes_in_comments(self):
-        for text in ('# use """ for long strings\n[mcp_servers.a]\nurl = "U"\n',
-                     "[mcp_servers.a]\nurl = \"U\"  # not \'\'\'multi-line\n",
-                     '[mcp_servers.a] # """\nurl = "U"\n'):
-            with self.subTest(text):
-                self.assertEqual({"a": "U"}, check.parse_codex_servers_lines(text))
-        with self.assertRaises(check.UnsupportedToml):   # a real one is still refused, comment or not
-            check.parse_codex_servers_lines('# note\n[mcp_servers.a]\nurl = "U"\nx = """\ny\n"""  # c\n')
-        self.assertEqual('x = "a # b" \'#\' ', check.strip_toml_comments('x = "a # b" \'#\' # c \'\'\''))   # `#` in a string stays
-
-    def test_fallback_parser_accepts_escapes_it_does_not_need(self):
-        text = '[mcp_servers.a]\nurl = "U"\ncommand = "C:\\\\x"\n'
-        self.assertEqual({"a": "U"}, check.parse_codex_servers_lines(text))
-
-    def test_without_tomllib_unsupported_toml_skips_or_violates(self):
-        for name, text in self.UNSUPPORTED_TOML.items():
-            write(self.ws, ".codex/config.toml", text)
-            with self.subTest(name), mock.patch.object(check, "tomllib", None):
-                with self.assertRaises(check.Skip) as ctx:
-                    self.rule("mcp-parity")
-                self.assertIn("Python 3.11+", str(ctx.exception))
-                vs = self.rule("mcp-parity", require_tools=True)
-                self.assertViolation(vs, "mcp-parity", "Python 3.11+")
-                self.assertEqual([".codex/config.toml"], [v.path for v in vs])
-
-    def test_the_same_files_are_parsed_when_tomllib_exists(self):
-        write(self.ws, ".codex/config.toml", '[mcp_servers.tracker]\nurl = "https://mcp.example.com/mcp"\nnote = """\nurl = "x"\n"""\n')
-        if check.tomllib is None:
-            with self.assertRaises(check.Skip):
-                self.rule("mcp-parity")
-        else:
-            self.assertClean(self.rule("mcp-parity"))
+        self.assertEqual({"a": None, "b": None}, check.parse_codex_servers(extra))
+        self.assertEqual({}, check.parse_codex_servers("[other]\nx = 1\n"))
 
     def test_every_toml_form_passes_parity(self):
         for name, text in self.TOML_FORMS.items():
@@ -643,10 +452,7 @@ class McpParityTests(Base):
     def test_invalid_toml_is_a_violation_naming_the_file(self):
         write(self.ws, ".codex/config.toml", "[mcp_servers.tracker\nurl = \n")
         vs = self.rule("mcp-parity")
-        if check.tomllib is None:
-            self.assertTrue(all(v.path != ".codex/config.toml" or "TOML" not in v.message for v in vs))
-        else:
-            self.assertEqual([".codex/config.toml"], [v.path for v in vs if "not valid TOML" in v.message])
+        self.assertEqual([".codex/config.toml"], [v.path for v in vs if "not valid TOML" in v.message])
 
 
 class SkillExposureTests(Base):
@@ -868,186 +674,29 @@ class GuardrailsTests(Base):
         self.assertViolation(self.rule("guardrails"), "guardrails", "does not invoke")
 
 
-def generated_ws(parent):
-    """A copy of this repo's generated files and OpenSpec pins, enough for the generated-skills rule."""
-    root = Path(parent) / "gen"
-    for top in (".agents", ".claude"):
-        shutil.copytree(str(REPO / top), str(root / top), symlinks=True, ignore=check._copy_ignore)
-    for name in ("config.yaml", "cli-profile.json", "cli-version"):
-        write(root, "openspec/" + name, (REPO / "openspec" / name).read_text())
-    return root
-
-
-def tree_state(root):
-    """{relative path: ("file", bytes) | ("link", target) | ("dir",)} for everything under root, links not followed."""
-    state = {}
-    for dirpath, dirnames, filenames in os.walk(str(root)):
-        for name in dirnames + filenames:
-            full = os.path.join(dirpath, name)
-            rel = os.path.relpath(full, str(root))
-            if os.path.islink(full):
-                state[rel] = ("link", os.readlink(full))
-            elif os.path.isdir(full):
-                state[rel] = ("dir",)
-            else:
-                with open(full, "rb") as handle:
-                    state[rel] = ("file", handle.read())
-        dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
-    return state
-
-
-class GeneratedSkillsTests(unittest.TestCase):
+class CliVersionTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="check-gen-")
+        self.tmp = tempfile.mkdtemp(prefix="check-pin-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.root = generated_ws(self.tmp)
+        self.root = Path(self.tmp)
 
-    def run_rule(self, **kwargs):
-        return check.check_generated_skills(self.root, **kwargs)
-
-    def need_cli(self):
-        pin, _ = check.pinned_openspec_version(REPO)
-        if check.installed_openspec_version() != pin:
-            self.skipTest("openspec %s is not on PATH" % pin)
-
-    def test_pinned_version_is_read_from_the_file(self):
-        version, err = check.pinned_openspec_version(self.root)
-        self.assertRegex(version, r"^\d+\.\d+\.\d+$")
-        self.assertIsNone(err)
+    def test_version_is_read_from_the_file(self):
+        self.assertEqual((None, "openspec/cli-version not found"), check.pinned_openspec_version(self.root))
         write(self.root, "openspec/cli-version", " 3.4.5 \n\n")
         self.assertEqual(("3.4.5", None), check.pinned_openspec_version(self.root))
 
-    def test_generated_skills_are_found_by_their_author(self):
-        found = check.generated_skill_files(self.root)
-        self.assertIn(".agents/skills/openspec-explore/SKILL.md", found)
-        self.assertNotIn(".agents/skills/openspec-linear-sync/SKILL.md", found)
-        self.assertNotIn(".agents/skills/unslop/SKILL.md", found)
-
-    def test_missing_cli_version_is_a_violation(self):
-        (self.root / "openspec/cli-version").unlink()
-        vs = self.run_rule()
-        self.assertEqual(["openspec/cli-version"], [v.path for v in vs])
-        self.assertIn("missing", vs[0].message)
-        self.assertIn("echo 2.1.1 > openspec/cli-version", vs[0].message)
-
-    def test_malformed_cli_version_is_a_violation(self):
+    def test_malformed_version_is_an_error(self):
         for text in ("v2.1.1\n", "2.1\n", "2.1.1 2.1.2\n", "\n"):
             write(self.root, "openspec/cli-version", text)
-            vs = self.run_rule()
-            self.assertEqual(["openspec/cli-version"], [v.path for v in vs], text)
-            self.assertIn("invalid", vs[0].message)
+            version, err = check.pinned_openspec_version(self.root)
+            self.assertIsNone(version, text)
+            self.assertIn("must contain one version", err)
 
-    def test_missing_profile_is_a_violation(self):
-        (self.root / "openspec/cli-profile.json").unlink()
-        vs = self.run_rule()
-        self.assertEqual(["openspec/cli-profile.json"], [v.path for v in vs])
-        self.assertIn("make openspec", vs[0].message)
-
-    def test_both_files_missing_gives_one_violation_each(self):
-        (self.root / "openspec/cli-profile.json").unlink()
-        (self.root / "openspec/cli-version").unlink()
-        self.assertEqual(["openspec/cli-version", "openspec/cli-profile.json"], [v.path for v in self.run_rule()])
-
-    def test_no_generated_skills_and_no_pin_files_passes(self):
-        empty = Path(self.tmp) / "empty"
-        empty.mkdir()
-        self.assertEqual([], check.check_generated_skills(empty))
-        write(empty, ".agents/skills/demo/SKILL.md", "---\nname: demo\ndescription: d\nmetadata:\n  author: me\n---\n")
-        self.assertEqual([], check.check_generated_skills(empty))
-        self.assertEqual((None, "openspec/cli-version not found"), check.pinned_openspec_version(empty))
-
-    def test_without_cli_it_is_a_skip_or_a_violation_under_require_tools(self):
-        with mock.patch.object(check.shutil, "which", return_value=None):
-            with self.assertRaises(check.Skip) as ctx:
-                self.run_rule()
-            self.assertIn("found none", str(ctx.exception))
-            self.assertIn("npm i -g @fission-ai/openspec@", str(ctx.exception))
-            vs = self.run_rule(require_tools=True)
-        self.assertEqual("generated-skills", vs[0].rule)
-        self.assertIn("openspec", vs[0].message)
-
-    def test_cli_at_another_version_is_a_skip_naming_both_versions(self):
-        pin, _ = check.pinned_openspec_version(self.root)
-        with mock.patch.object(check, "installed_openspec_version", return_value="0.0.1"):
-            with self.assertRaises(check.Skip) as ctx:
-                self.run_rule()
-            self.assertIn(pin, str(ctx.exception))
-            self.assertIn("0.0.1", str(ctx.exception))
-            vs = self.run_rule(require_tools=True)
-        self.assertIn("0.0.1", vs[0].message)
-        self.assertIn("npm i -g @fission-ai/openspec@" + pin, vs[0].message)
-
-    def test_green_on_unchanged_files_and_root_is_never_written(self):
-        self.need_cli()
-        before = tree_state(self.root)
-        self.assertGreater(len(before), 20)
-        self.assertEqual([], [v.render() for v in self.run_rule()])
-        self.assertEqual(before, tree_state(self.root))
-
-    def test_tree_state_sees_content_and_link_target_changes(self):
-        before = tree_state(self.root)
-        path = self.root / ".agents/skills/openspec-explore/SKILL.md"
-        path.write_text(path.read_text() + "x")
-        self.assertNotEqual(before, tree_state(self.root))
-        path.write_text(path.read_text()[:-1])
-        self.assertEqual(before, tree_state(self.root))
-        link = self.root / ".claude/skills/openspec-explore"
-        target = os.readlink(str(link))
-        link.unlink()
-        os.symlink(target + "/../" + Path(target).name, str(link))
-        self.assertNotEqual(before, tree_state(self.root))
-
-    def test_red_after_editing_a_generated_file(self):
-        self.need_cli()
-        path = self.root / ".agents/skills/openspec-explore/SKILL.md"
-        path.write_text(path.read_text() + "\nhand edit\n")
-        vs = self.run_rule()
-        self.assertEqual([".agents/skills/openspec-explore/SKILL.md"], [v.path for v in vs])
-        self.assertIn("differs from `openspec update` output", vs[0].message)
-        self.assertIn("make openspec", vs[0].message)
-
-    def test_red_after_adding_a_stale_command_file(self):
-        self.need_cli()
-        write(self.root, ".claude/commands/opsx/apply.md",
-              '---\nname: "OPSX: Apply"\ndescription: "Implement tasks from an OpenSpec change (Experimental)"\n---\n\nOld command.\n')
-        vs = self.run_rule()
-        self.assertEqual([".claude/commands/opsx/apply.md"], [v.path for v in vs])
-        self.assertIn("stale /opsx command", vs[0].message)
-        self.assertIn("make openspec", vs[0].message)
-
-    def test_red_after_replacing_a_link_by_a_real_directory(self):
-        self.need_cli()
-        link = self.root / ".claude/skills/openspec-explore"
-        self.assertTrue(link.is_symlink())
-        link.unlink()
-        write(self.root, ".claude/skills/openspec-explore/SKILL.md", "---\nname: openspec-explore\n---\n")
-        vs = self.run_rule()
-        self.assertEqual([".claude/skills/openspec-explore"], [v.path for v in vs])
-        self.assertIn("differs from `openspec update` output", vs[0].message)
-
-    def test_comparison_kinds(self):
-        """Compare against a fresh tree without running the CLI: edits, deletions, creations, links."""
-        fresh = Path(self.tmp) / "fresh"
-        shutil.copytree(str(self.root), str(fresh), symlinks=True)
-        self.assertEqual([], check._compare_generated(self.root, fresh))
-        write(self.root, ".claude/commands/opsx/apply.md", "stale\n")
-        write(self.root, ".agents/skills/custom/SKILL.md", "only in the root\n")
-        write(self.root, ".claude/skills/settings.local.json", "{}")
-        os.symlink("../../.agents/skills/a", str(fresh / ".claude/skills/new-link"))
-        os.symlink("../../.agents/skills/b", str(self.root / ".claude/skills/new-link"))
-        (fresh / ".agents/skills/openspec-explore/SKILL.md").unlink()
-        (self.root / ".agents/skills/unslop/SKILL.md").unlink()
-        write(fresh, ".agents/skills/unslop/SKILL.md", "created by the update\n")
-        vs = check._compare_generated(self.root, fresh)
-        self.assertEqual([".agents/skills/custom", ".agents/skills/openspec-explore/SKILL.md",
-                          ".agents/skills/unslop/SKILL.md", ".claude/commands", ".claude/skills/new-link"],
-                         sorted(v.path for v in vs))
-        by_path = {v.path: v.message for v in vs}
-        self.assertIn("deleted by", by_path[".agents/skills/custom"])
-        self.assertIn("deleted by", by_path[".claude/commands"])
-        self.assertIn("deleted by", by_path[".agents/skills/openspec-explore/SKILL.md"])
-        self.assertIn("differs from", by_path[".claude/skills/new-link"])
-        self.assertIn("created by", by_path[".agents/skills/unslop/SKILL.md"])
+    def test_same_major_and_not_older_satisfies(self):
+        for installed in ("2.1.1", "2.1.2", "2.2.0", "2.10.0", "2.1.1-beta.1"):
+            self.assertTrue(check.version_satisfies(installed, "2.1.1"), installed)
+        for installed in ("2.1.0", "2.0.9", "1.9.9", "3.0.0", "", None, "nonsense"):
+            self.assertFalse(check.version_satisfies(installed, "2.1.1"), installed)
 
 
 class OpenspecValidateTests(Base):
@@ -1064,28 +713,30 @@ class OpenspecValidateTests(Base):
     def fake_run(self, code=0):
         return mock.Mock(return_value=mock.Mock(returncode=code, stdout="boom\n"))
 
-    def test_pinned_version_mismatch_is_a_skip_or_a_violation(self):
+    def test_older_or_other_major_cli_is_a_skip_or_a_violation(self):
         self.pin("9.9.9")
-        with mock.patch.object(check, "installed_openspec_version", return_value="1.13.0"), \
-                mock.patch.object(check.subprocess, "run", self.fake_run()) as run:
-            with self.assertRaises(check.Skip) as ctx:
-                self.rule("openspec-validate", require_tools=False)
-            self.assertIn("9.9.9", str(ctx.exception))
-            self.assertIn("1.13.0", str(ctx.exception))
-            self.assertIn("openspec/cli-version", str(ctx.exception))
-            vs = self.rule("openspec-validate", require_tools=True)
-            run.assert_not_called()
-        self.assertEqual(["openspec-validate"], [v.rule for v in vs])
-        self.assertIn("npm i -g @fission-ai/openspec@9.9.9", vs[0].message)
+        for installed in ("9.9.8", "10.0.0", "1.13.0"):
+            with mock.patch.object(check, "installed_openspec_version", return_value=installed), \
+                    mock.patch.object(check.subprocess, "run", self.fake_run()) as run:
+                with self.assertRaises(check.Skip) as ctx:
+                    self.rule("openspec-validate", require_tools=False)
+                self.assertIn("9.9.9 or a newer 9.x", str(ctx.exception))
+                self.assertIn(installed, str(ctx.exception))
+                self.assertIn("openspec/cli-version", str(ctx.exception))
+                vs = self.rule("openspec-validate", require_tools=True)
+                run.assert_not_called()
+            self.assertEqual(["openspec-validate"], [v.rule for v in vs])
+            self.assertIn("npm i -g @fission-ai/openspec@9.9.9", vs[0].message)
 
-    def test_pinned_version_match_runs_the_cli(self):
+    def test_same_or_newer_cli_of_the_same_major_runs(self):
         self.pin("9.9.9")
-        with mock.patch.object(check, "installed_openspec_version", return_value="9.9.9"), \
-                mock.patch.object(check.shutil, "which", return_value="/bin/openspec"), \
-                mock.patch.object(check.subprocess, "run", self.fake_run(1)) as run:
-            vs = self.rule("openspec-validate", require_tools=False)
-        run.assert_called_once()
-        self.assertViolation(vs, "openspec-validate", "openspec validate --all --strict")
+        for installed in ("9.9.9", "9.10.0"):
+            with mock.patch.object(check, "installed_openspec_version", return_value=installed), \
+                    mock.patch.object(check.shutil, "which", return_value="/bin/openspec"), \
+                    mock.patch.object(check.subprocess, "run", self.fake_run(1)) as run:
+                vs = self.rule("openspec-validate", require_tools=False)
+            run.assert_called_once()
+            self.assertViolation(vs, "openspec-validate", "openspec validate --all --strict")
 
     def test_pinned_version_missing_cli(self):
         self.pin("9.9.9")
@@ -1166,6 +817,14 @@ class AgentsMapTests(Base):
         self.assertViolation(self.rule("agents-map"), "agents-map", "GLOSSARY-MAP.md does not resolve")
         write(self.ws, "GLOSSARY-MAP.md", "# map\n")
         self.assertClean(self.rule("agents-map"))
+
+    def test_links_of_the_readme_and_the_reference_docs_are_checked(self):
+        write(self.ws, "README.md", "[gone](docs/reference/gone.md)\n")
+        write(self.ws, "docs/reference/a.md", "# A\n\n[up](../../README.md#nope) [ok](../agents/a.md)\n")
+        vs = self.rule("agents-map")
+        self.assertViolation(vs, "agents-map", "link to docs/reference/gone.md does not resolve")
+        self.assertViolation(vs, "agents-map", "link to ../../README.md#nope")
+        self.assertEqual(2, len([v for v in vs if v.path in ("README.md", "docs/reference/a.md")]), vs)
 
     def test_urls_anchors_and_code_are_ignored(self):
         write(self.ws, "docs/agents/a.md",
@@ -1293,7 +952,7 @@ class CliTests(Base):
         lines = out.splitlines()
         self.assertEqual(1, code)
         self.assertTrue(lines[0].startswith('manifest: repos.json: repos[0] "w": unknown key "product"'))
-        self.assertEqual('  Convention: README.md, section "Manifest (`repos.json`)"', lines[1])
+        self.assertEqual('  Convention: docs/reference/workspace.md, section "Manifest (`repos.json`)"', lines[1])
         self.assertEqual("check: 1 violation in 1 rule", lines[-1])
 
     def test_unknown_rule_is_a_usage_error(self):
@@ -1305,7 +964,7 @@ class CliTests(Base):
         code, out, _ = self.run_main("--list")
         self.assertEqual(0, code)
         self.assertEqual([r.id for r in check.RULES], [l.split()[0] for l in out.splitlines()])
-        self.assertEqual(10, len(check.RULES))
+        self.assertEqual(9, len(check.RULES))
 
     def test_skip_is_reported_and_counted(self):
         with mock.patch.object(check.shutil, "which", return_value=None):
@@ -1315,7 +974,7 @@ class CliTests(Base):
             self.assertTrue(out.endswith("check: ok (1 rules, 1 skipped)\n"))
             code, out, _ = self.run_main("--root", str(self.ws), "--only", "openspec-validate", "--require-tools")
         self.assertEqual(1, code)
-        self.assertIn("Convention: openspec/config.yaml", out)
+        self.assertIn("Convention: docs/agents/openspec.md", out)
 
     def test_openspec_version_flag(self):
         code, out, _ = self.run_main("--root", str(REPO), "--openspec-version")
@@ -1323,6 +982,15 @@ class CliTests(Base):
         code, out, err = self.run_main("--root", str(self.ws), "--openspec-version")
         self.assertEqual((2, ""), (code, out))
         self.assertIn("cannot determine", err)
+
+    def test_openspec_ok_flag(self):
+        with mock.patch.object(check, "installed_openspec_version", return_value="99.0.0"):
+            code, out, err = self.run_main("--root", str(REPO), "--openspec-ok")
+        self.assertEqual((1, ""), (code, out))
+        self.assertIn("found 99.0.0", err)
+        pin = check.pinned_openspec_version(REPO)[0]
+        with mock.patch.object(check, "installed_openspec_version", return_value=pin):
+            self.assertEqual(0, self.run_main("--root", str(REPO), "--openspec-ok")[0])
 
 
 if __name__ == "__main__":

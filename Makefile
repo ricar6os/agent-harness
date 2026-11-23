@@ -12,7 +12,7 @@ PRODUCT ?=
 NAME ?=
 REPO ?=
 
-.PHONY: help sync skills status list repo-check doctor openspec check test
+.PHONY: help sync skills status list repo-check doctor check test
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -43,16 +43,11 @@ doctor: ## Check required tools: git, jq, gh (authenticated), python3, openspec
 	  if gh auth status >/dev/null 2>&1; then printf '  \033[32m✓\033[0m gh auth\n'; \
 	  else printf '  \033[31m✗\033[0m gh auth (run: gh auth login)\n'; ok=0; fi; \
 	fi; \
-	pin=$$(tr -d '[:space:]' < openspec/cli-version 2>/dev/null); \
-	if command -v openspec >/dev/null 2>&1 && [[ -n "$$pin" ]]; then \
-	  have=$$(openspec --version 2>/dev/null | tr -d '[:space:]'); \
-	  if [[ "$$have" == "$$pin" ]]; then printf '  \033[32m✓\033[0m openspec %s (pinned in openspec/cli-version)\n' "$$pin"; \
-	  else printf '  \033[31m✗\033[0m openspec %s installed, %s pinned in openspec/cli-version (run: npm i -g @fission-ai/openspec@%s)\n' "$${have:-?}" "$$pin" "$$pin"; ok=0; fi; \
+	if command -v openspec >/dev/null 2>&1; then \
+	  if python3 scripts/check.py --openspec-ok; then printf '  \033[32m✓\033[0m openspec version\n'; \
+	  else printf '  \033[31m✗\033[0m openspec version\n'; ok=0; fi; \
 	fi; \
-	[[ $$ok -eq 1 ]] || { echo; echo "Install missing tools: openspec -> npm i -g @fission-ai/openspec@$${pin:-<version in openspec/cli-version>}"; exit 1; }
-
-openspec: ## Regenerate the openspec-* skills with the pinned CLI version and profile (never edit them by hand)
-	@scripts/openspec-update.sh
+	[[ $$ok -eq 1 ]] || { echo; echo "Install openspec with: npm i -g @fission-ai/openspec@$$(python3 scripts/check.py --openspec-version)"; exit 1; }
 
 check: ## Check the workspace conventions (rules: scripts/check.py --list)
 	@python3 scripts/check.py

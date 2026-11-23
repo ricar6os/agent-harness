@@ -1,71 +1,44 @@
-# Issue tracker: Linear
+# Issue tracker
 
-Issues live in **Linear**; OpenSpec files in this repository are the source of truth for specs and tasks. Agents interact with Linear through the
-**Linear MCP server** (`https://mcp.linear.app/mcp`), never by scraping the web UI and never
-through the GitHub issue CLI.
+Read this before you read or write issues. The tracker is set by one line at the top of
+`openspec/config.yaml` (rule `tracker` of `make check`):
 
-## Availability
+| `x-tracker` | Issues live in | Tools |
+| --- | --- | --- |
+| `linear` | Linear: one project per change, one issue per phase | the `linear-server` MCP server |
+| `github` | GitHub Issues of the workspace repo: one parent issue per change, one sub-issue per phase | the `gh` CLI |
+| `none` | nowhere: the checkboxes of each change's `plan.md` are the tracking | none |
 
-The server is declared once per client, always under the name `linear-server`:
+OpenSpec files are the source of truth for specs and plans; the tracker mirrors phases. The sync
+procedure and the one progress write the agent makes are in the `openspec-tracker-sync` skill,
+with one reference per tracker. Use only the configured tracker: never fall back to another one,
+and with `none` create no issues anywhere.
 
-`.mcp.json` (Claude Code):
+## Every tracker
 
-```json
-{
-  "mcpServers": {
-    "linear-server": { "type": "http", "url": "https://mcp.linear.app/mcp" }
-  }
-}
-```
-
-`.codex/config.toml` (Codex — the repository must be trusted for it to load):
-
-```toml
-[mcp_servers.linear-server]
-url = "https://mcp.linear.app/mcp"
-```
-
-`opencode.json` (opencode):
-
-```json
-{
-  "mcp": {
-    "linear-server": { "type": "remote", "url": "https://mcp.linear.app/mcp", "enabled": true }
-  }
-}
-```
-
-It is an authenticated HTTP MCP server: the first use in a new environment triggers an OAuth
-approval. If no Linear tools are exposed in the current session, **stop and say so**. Do not
-invent issue IDs, and do not silently fall back to `gh issue`.
-
-## Conventions
-
-- **Discover the tool names from the connected server** rather than hardcoding them. The server
-  exposes operations to list/search issues, read a single issue, create and update issues, read
-  and add comments, and list teams, projects, statuses and labels.
-- **Issue IDs** are `<TEAM>-<number>` (e.g. `ABC-123`, `ABC-4418`). Always cite the ID when
-  referring to a ticket, in chat and in written artifacts.
 - **Read before writing.** Fetch the issue and its comments before proposing an edit.
-- **Never** close, reassign, or change the status of an issue unless the user asks for it (the one exception is the In Progress write in `openspec/config.yaml`).
-- Multi-line bodies are Markdown. Keep Linear's own conventions (checklists, `ABC-123` mentions).
+- **Cite the reference** (`ABC-123`, `owner/repo#13`) when referring to an issue, in chat and in
+  written artifacts. Never invent one.
+- **Never** close, reassign or change the status of an issue unless the user asks, except the
+  one write apply makes when it starts a phase (In Progress in Linear, assignment in GitHub).
+- **PRs**: one per repo and phase; how a PR names its phase's issue is in
+  [working-on-a-repo.md](working-on-a-repo.md), "Commits & PRs".
 
-## Products, projects, epics and tasks
+## Linear
 
-The rules (one product and one Linear project per change, Epics, tasks, dependencies, the one
-status the agent writes) are written in `openspec/config.yaml`; the sync procedure is the
-`openspec-linear-sync` skill. What is specific to Linear conventions:
+The `linear-server` MCP server (`https://mcp.linear.app/mcp`) is declared under that name in
+`.mcp.json`, `.codex/config.toml` and `opencode.json` (rule `mcp-parity`). It is an
+authenticated HTTP server: the first use in a new environment asks for an OAuth approval. If no
+Linear tools are exposed in the session, stop and say so. Discover tool names from the
+connected server rather than hardcoding them. Issue ids are `<TEAM>-<number>`.
 
-- **Project label**: exactly one, under the group `Product`, matching the OpenSpec product.
-  Product labels classify projects; issue labels classify Epics.
-- **Epic**: an issue labelled `Epic`. **Task**: a child issue of its Epic, in the same project;
-  its id is used in PR titles. There is no Story layer.
+## GitHub
 
-## Relation to this workspace
+`gh` must be authenticated (`make doctor` checks it). Issues are opened in the workspace repo,
+the one that holds `openspec/`, never in `repos/<name>`, because a phase can span several repos.
 
-GitHub Issues are **not** used. GitHub holds code and pull requests only. A task's Linear issue ID
-goes in the PR title, never in commits: see "Commits & PRs" in [working-on-a-repo.md](working-on-a-repo.md).
+## Switching tracker
 
-Each repo under `repos/` is a separate GitHub repository but they share the same Linear
-workspace, so a single Linear issue can span several repos. For those, create an OpenSpec change
-under `openspec/changes/` and link it from every PR.
+Change `x-tracker` and run `make check`. A workspace that does not use Linear can remove the
+`linear-server` entries from the three MCP files (all three, or `mcp-parity` fails). Changes
+already bound to the old tracker keep their references; sync them again only if the user asks.

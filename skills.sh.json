@@ -1,0 +1,28 @@
+{
+	"$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+	"notGrouped": "bottom",
+	"groupings": [
+		{
+			"title": "Any repository",
+			"description": "Skills that need nothing else from this harness.",
+			"skills": [
+				"create-pull-request",
+				"unslop"
+			]
+		},
+		{
+			"title": "OpenSpec",
+			"description": "For repositories that use OpenSpec with the spec-plan schema.",
+			"skills": [
+				"openspec-tracker-sync"
+			]
+		},
+		{
+			"title": "Meta workspace",
+			"description": "Only inside a multi-repo workspace built from this harness: they call its scripts.",
+			"skills": [
+				"sync-repos"
+			]
+		}
+	]
+}

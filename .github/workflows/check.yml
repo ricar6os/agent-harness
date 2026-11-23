@@ -16,9 +16,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install the pinned OpenSpec CLI
+      - name: Install the OpenSpec CLI at the version in openspec/cli-version
         run: npm install -g "@fission-ai/openspec@$(python3 scripts/check.py --openspec-version)"
       - name: Check the workspace conventions
         run: python3 scripts/check.py --require-tools
-      - name: Run the checker tests
+      - name: Run the tests
         run: python3 -m unittest discover -s tests

@@ -1,22 +1,34 @@
-# OpenSpec: where each rule is written
+# OpenSpec in this workspace
 
-Read this before you propose, update, sync or apply an OpenSpec change. Each rule is written in
-full in one place; follow the pointer instead of copying it.
+Read this before you explore, propose, apply or archive an OpenSpec change. Each rule is written in full in one place; this file says where.
 
-## Products and Linear projects
+## The workflow
+
+The workflow skills are OpenSpec's own, installed by `openspec init` (see `README.md`, "Set up a product repo"). This workspace changes what they produce through its schema, `spec-plan`, and its `openspec/config.yaml`.
+
+| Step | Skill | Result with the `spec-plan` schema |
+| ---- | ----- | ---------------------------------- |
+| Explore (optional) | `openspec-explore` | A shared understanding in the conversation. |
+| Propose | `openspec-propose` | `openspec/changes/<name>/` with lean delta specs and one `plan.md` of phases. No `proposal.md`, `design.md` or `tasks.md`. |
+| Apply, once per phase | `openspec-apply-change` | The first phase with unchecked tasks, implemented and verified, with one commit per repo. Then it stops, even though the skill's own text says to continue through every task: the schema's apply rule decides. |
+| Archive | `openspec-archive-change` | Delta specs merged into `openspec/specs/`, the change moved to `openspec/changes/archive/`. |
+
+When one of those skills is missing in the session, tell the user to run `openspec init`; do not write the artifacts from memory.
+
+## Where each rule is written
 
 | Rule | Written in full in |
 | ---- | ------------------ |
-| Product and Linear project of a change, spec paths, task groups, `Depends on:` lines, `## Contracts` and `## Deployment order` of a multi-repo change | `openspec/config.yaml` (`context:` and `rules:`), which the OpenSpec CLI injects into every operation; the one Linear status the agent writes is in `operations.apply.guidance` of the same file |
-| Linear conventions: tool, issue ids, reading before writing, what never changes | [issue-tracker.md](issue-tracker.md) |
-| Sync procedure, labels, mapping, state, legacy migration | skill `openspec-linear-sync` |
-| PR title and one PR per repo | [working-on-a-repo.md](working-on-a-repo.md) |
+| What specs and `plan.md` contain; what apply does in a phase | `openspec/schemas/spec-plan/schema.yaml` and its templates. The CLI hands them to the skills. |
+| How a repo named in a plan is found; products | The `context:` of `openspec/config.yaml` |
+| When the tracker is synced | The `rules:` and `operations:` of `openspec/config.yaml` |
+| Which tracker mirrors the phases, and how | `x-tracker` in `openspec/config.yaml`; conventions in [issue-tracker.md](issue-tracker.md); procedure in skill `openspec-tracker-sync` |
+| Branches, commits, one PR per repo and phase | [working-on-a-repo.md](working-on-a-repo.md) |
 
-The keys of a change's `.openspec.yaml` are `x-product`, `x-linear-project` and
-`x-linear-sync-version` (OpenSpec 2 keeps only `x-` keys without a warning).
+## Products and trackers
+
+Products are optional: a change records `x-product` only when `repos.json` declares `products`, and its spec paths then start with that slug. The `change-product` rule of `make check` enforces both cases. With a tracker, each change has its own container in it, recorded in `.openspec.yaml` (`x-linear-project` or `x-github-issue`); with `x-tracker: none`, nothing is recorded. The keys this workspace adds to `.openspec.yaml` and `config.yaml` carry the `x-` prefix, which the CLI accepts without a warning.
 
 ## Behaviour without a main spec
 
-When a change is over behaviour that has no main spec, tell the user that no main spec covers it
-and ask them to run `openspec-create-spec-from-code` first (the skill is user-invoked only), so
-the change can modify or remove requirements instead of only adding.
+A change can only modify or remove a requirement that a main spec already holds. When a change is over behaviour that no main spec covers, tell the user and ask them to run `openspec-create-spec-from-code` first (only the user starts that skill). With products, its specs go under `openspec/specs/<product>/`, as the `context:` says.

@@ -4,7 +4,7 @@
 `decide(tool, tool_input, cwd, root)` returns ("allow" | "ask" | "deny", reason). It blocks only
 what is certainly a forbidden action ("exact or skip"): force-pushes, branch deletion, PR merges,
 commits and pushes on a default branch, and reads of secret files or of the whole environment.
-It prevents mistakes; it is not a sandbox (see README.md, section "Guardrails").
+It prevents mistakes; it is not a sandbox (see docs/reference/guardrails.md).
 
     guard.py --agent claude|codex|opencode   read one tool call on stdin, answer in that agent's format
     guard.py --explain '<shell command>'     print the decision for a command run in the current directory

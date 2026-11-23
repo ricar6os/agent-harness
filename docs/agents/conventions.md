@@ -13,7 +13,7 @@ the right place (below) before you finish.
 
 | The convention is about | It becomes | How |
 | ----------------------- | ---------- | --- |
-| This workspace, and should hold in every meta: the manifest, OpenSpec changes and specs, skills, MCP config, what agents may do here | A rule in the template's `scripts/check.py` | Follow "Adding a rule" in `README.md` ("Checks"). In the template repository, edit `scripts/check.py` directly. In a meta created from it, `scripts/` is harness-owned (identical in every meta): propose the rule to the template, and do not fork `scripts/check.py` locally |
+| This workspace, and should hold in every meta: the manifest, OpenSpec changes and specs, skills, MCP config, what agents may do here | A rule in the harness's `scripts/check.py` | Follow "Adding a rule" in `docs/reference/checks.md`. In the harness repository, edit `scripts/check.py` directly. In a meta, `scripts/` is harness-owned (identical in every meta): propose the rule to the harness repository, and do not fork `scripts/check.py` locally |
 | This workspace, and no rule can check it exactly | A minimal doc in `docs/conventions/` of the meta (instance-owned) | Say what the convention is and why it is not enforced |
 | One repository's code | A rule in that repository's own tooling (linter config, custom lint rule or test) | `create-rule`, run inside `repos/<name>` |
 | One repository, and no rule can check it exactly | A minimal doc in that repository's docs | `create-rule` writes it |
@@ -34,4 +34,4 @@ the right place (below) before you finish.
   before it installs a dependency.
 - If a rule would need a guess to decide, do not write it: write the minimal doc instead.
 
-Both skills are vendored from `CodelyTV/agent-harness` (see `README.md`, "Convention skills").
+Both skills are vendored from `CodelyTV/agent-harness` (see `docs/reference/specs.md`, "Convention skills").

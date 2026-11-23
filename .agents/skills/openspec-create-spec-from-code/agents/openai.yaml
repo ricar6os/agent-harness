@@ -1,6 +1,0 @@
-interface:
-  display_name: "Create specs from code"
-  short_description: "Write the baseline OpenSpec specs of behaviour that already exists in a product's repos"
-  default_prompt: "Create the baseline spec for a capability of the product from the code of its repos, following the openspec-create-spec-from-code skill"
-policy:
-  allow_implicit_invocation: false
