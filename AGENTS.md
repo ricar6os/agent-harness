@@ -13,7 +13,7 @@ Write everything in this repository in English: code, comments, commits, scripts
 - Each `repos/<name>` is its own git repository: commit product code there. The root versions the manifest, the scripts, the specs and the skills.
 - Work on a branch. A default branch changes only through a pull request.
 - Ask first before removing entries from `repos.json`, merging PRs, force-pushing, rewriting history, deleting branches or touching production infrastructure.
-- When a hook (`scripts/guard.py`) blocks a call, stop and ask the user. `scripts/guard.py --explain '<cmd>'` says why it blocked.
+- When a hook (`scripts/guard.py`) blocks a call, stop and ask the user. `scripts/guard.py --explain '<cmd>'` says why it blocked. The exception: when it asks you to read a repo's instructions before an edit, read them and repeat the edit.
 - Run `make check` before committing here, and fix what it reports.
 - When the user corrects you on a convention, also make it a rule where the convention lives ([conventions](docs/agents/conventions.md)). Start `deterministify` only when the user asks.
 

@@ -39,4 +39,6 @@ The kinds of skills in a meta workspace and how repo skills reach the agents.
   that says it has no `AGENTS.md`. A clone with neither instructions nor a `check` gets no skill;
   `make status` lists it as without instructions. Skills are listed up front by
   every harness, so this works the same in Claude Code, Codex and others. Start a new agent
-  session after linking to pick up new skills.
+  session after linking to pick up new skills. The skill only asks for the read; the guard
+  enforces it, by denying an edit in a clone whose instructions the session has not read
+  ([guardrails.md](guardrails.md#repository-instructions), "Repository instructions").

@@ -3,10 +3,11 @@
 
 `decide(tool, tool_input, cwd, root)` returns ("allow" | "ask" | "deny", reason). It blocks only
 what is certainly a forbidden action ("exact or skip"): force-pushes, branch deletion, PR merges,
-commits and pushes on a default branch, and reads of secret files or of the whole environment.
+commits and pushes on a default branch, reads of secret files or of the whole environment, and an
+edit in a clone whose instructions the session has not read.
 It prevents mistakes; it is not a sandbox (see docs/reference/guardrails.md).
 
-    guard.py --agent claude|codex|opencode   read one tool call on stdin, answer in that agent's format
+    guard.py --agent claude|codex|opencode   read one hook event on stdin, answer in that agent's format
     guard.py --explain '<shell command>'     print the decision for a command run in the current directory
 
 Any internal error allows the call and prints one line on stderr: a broken guard never blocks work.
@@ -14,12 +15,15 @@ Python 3.9+, standard library only.
 """
 import argparse
 import glob
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
 
 SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(SCRIPTS_DIR)
@@ -38,8 +42,11 @@ PATH_KEYS = ("file_path", "filePath", "notebook_path", "path")
 PATCH_KEYS = ("command", "patchText", "patch", "input")
 PATCH_PATH_RE = re.compile(r"^\*\*\* (?:Add File|Update File|Delete File|Move to):\s*(.+?)\s*$", re.M)
 
+EDIT_TOOLS = (FILE_TOOLS - {"read"}) | PATCH_TOOLS
+
 PRINTERS = frozenset("""cat head tail less more bat nl tac grep egrep fgrep rg ag awk sed cut sort uniq
 strings xxd od hexdump base64 jq yq open code vim vi nano emacs diff cmp""".split())
+READERS = frozenset("cat head tail less more bat nl tac sed".split())   # the printers that show a file as it is
 WRAPPERS = ("command", "sudo", "time", "nohup", "nice")
 NICE_OPTION_RE = re.compile(r"^(?:-n?-?[0-9]+|--adjustment=-?[0-9]+)$")
 ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -108,7 +115,7 @@ def _patch_paths(tool_input):
     return paths
 
 
-def decide_file_tool(tool, tool_input, cwd, root):
+def decide_file_tool(tool, tool_input, cwd, root, session=None):
     if tool in PATCH_TOOLS:
         paths = _patch_paths(tool_input)
     else:
@@ -116,6 +123,144 @@ def decide_file_tool(tool, tool_input, cwd, root):
     for path in paths:
         if is_secret_path(path, cwd, root):
             return "deny", SECRET_REASON
+    if session is None:
+        return "allow", ""
+    if tool in EDIT_TOOLS:
+        return decide_edit(paths, cwd, root, session)
+    note_reads(paths, cwd, root, session)
+    return "allow", ""
+
+
+# ---------------------------------------------------------------------------------------------
+# repository instructions
+# ---------------------------------------------------------------------------------------------
+
+IMPORT_ONLY_LINE_RE = re.compile(r"\s*(@AGENTS\.md)?\s*")
+
+
+def _real(path):
+    return os.path.realpath(path).lower()   # case-insensitive file systems (macOS)
+
+
+class Session:
+    """The instruction files one agent session has read.
+
+    Every hook call is a new process, so a read is kept as an empty marker file. The markers of a session
+    live in their own folder of the temporary directory; a subagent has its own context, so its own folder."""
+
+    def __init__(self, directory):
+        self.directory = directory
+
+    @classmethod
+    def of(cls, session_id, agent_id=None):
+        """The session with these ids; None when the agent sent no session id, and the rule is skipped."""
+        if not isinstance(session_id, str) or not session_id:
+            return None
+        key = session_id + ("\0" + agent_id if isinstance(agent_id, str) and agent_id else "")
+        user = getattr(os, "getuid", lambda: "")()
+        return cls(os.path.join(tempfile.gettempdir(), "agent-guard-%s" % user,
+                                hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]))
+
+    def _marker(self, path):
+        return os.path.join(self.directory, hashlib.sha256(_real(path).encode("utf-8")).hexdigest()[:32])
+
+    def writable(self):
+        """False when no marker can be kept: the rule would then block every edit, so it is skipped."""
+        try:
+            os.makedirs(self.directory, mode=0o700, exist_ok=True)
+        except OSError:
+            return False
+        return os.access(self.directory, os.W_OK)
+
+    def note(self, path):
+        try:
+            os.makedirs(self.directory, mode=0o700, exist_ok=True)
+            with open(self._marker(path), "a", encoding="utf-8"):
+                pass
+        except OSError:
+            pass
+
+    def has(self, path):
+        return os.path.exists(self._marker(path))
+
+    def forget(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+
+def read_manifest(root):
+    """repos.json of the workspace as a dict; None when it is missing or broken."""
+    try:
+        with open(os.path.join(root, "repos.json"), encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def repos_dir(root):
+    """The folder that holds the clones: `root` of repos.json, `repos` when it names none."""
+    data = read_manifest(root)
+    return os.path.join(root, (_check().normalize_rel(data.get("root")) if data else None) or "repos")
+
+
+def clone_of(path, cwd, root):
+    """The clone (a folder directly under the repos folder) that holds `path`, symlinks followed; None outside one."""
+    if not path or "\0" in path:
+        return None
+    absolute = os.path.normpath(os.path.join(cwd, os.path.expanduser(path)))
+    repos = repos_dir(root)
+    for candidate, base in ((absolute, repos), (os.path.realpath(absolute), os.path.realpath(repos))):
+        if _under(candidate, base) and len(candidate) > len(base):
+            return os.path.join(base, candidate[len(base):].lstrip(os.sep).split(os.sep)[0])
+    return None
+
+
+def own_claude_md(path):
+    """True when this CLAUDE.md says more than `@AGENTS.md`: the definition of scripts/instructions-lib.sh."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            return any(not IMPORT_ONLY_LINE_RE.fullmatch(line.rstrip("\n")) for line in handle)
+    except OSError:
+        return False
+
+
+def instruction_files(clone):
+    """The files the `<repo>--instructions` skill of scripts/link-skills.sh tells an agent to read."""
+    files = []
+    agents = os.path.join(clone, "AGENTS.md")
+    if os.path.isfile(agents):
+        files.append(agents)
+    claude = os.path.join(clone, "CLAUDE.md")
+    if own_claude_md(claude):
+        files.append(claude)
+    return files
+
+
+def note_reads(paths, cwd, root, session):
+    """Record the instruction files among `paths` as read by `session`."""
+    for path in paths:
+        clone = clone_of(path, cwd, root)
+        if clone is None:
+            continue
+        real = _real(os.path.join(cwd, os.path.expanduser(path)))
+        for file in instruction_files(clone):
+            if _real(file) == real:
+                session.note(file)
+
+
+def decide_edit(paths, cwd, root, session):
+    """Deny an edit in a clone while `session` has not read the instructions of that clone."""
+    for path in paths:
+        clone = clone_of(path, cwd, root)
+        if clone is None:
+            continue
+        unread = [file for file in instruction_files(clone) if not session.has(file)]
+        if unread and session.writable():
+            one = len(unread) == 1
+            return "deny", ("read %s before editing under %s: %s the rules of that repository, and this session has "
+                            "not read %s. Do not ask the user about this block: read %s in full, then repeat the edit."
+                            % (" and ".join(unread), clone + os.sep, "it holds" if one else "they hold",
+                               "it" if one else "them", "it" if one else "them"))
     return "allow", ""
 
 
@@ -435,12 +580,8 @@ def current_branch(directory):
 
 def manifest_default_branch(top, root):
     """Branch of the repos.json entry whose clone is `top`; None when `top` is not one."""
-    try:
-        with open(os.path.join(root, "repos.json"), encoding="utf-8") as handle:
-            data = json.load(handle)
-    except (OSError, ValueError):
-        return None
-    if not isinstance(data, dict) or not isinstance(data.get("repos"), list):
+    data = read_manifest(root)
+    if data is None or not isinstance(data.get("repos"), list):
         return None
     normalize = _check().normalize_rel  # the same normalization as scripts/check.py
     base = normalize(data.get("root")) or "repos"
@@ -944,8 +1085,15 @@ def runs_stdin_script(commands, index):
     return False
 
 
-def decide_simple(tokens, cur, cwd, root, overrides, depth=0):
-    """(decision, new current directory) for one simple command."""
+def is_reader(name, args):
+    """True when `name args` shows its file arguments as they are (`sed -i` edits them instead)."""
+    if name == "sed" and any(a.startswith("--in-place") or (a[:1] == "-" and a[1:2] != "-" and "i" in a) for a in args):
+        return False
+    return name in READERS
+
+
+def decide_simple(tokens, cur, cwd, root, overrides, depth=0, reads=None):
+    """(decision, new current directory) for one simple command. The files it shows are added to `reads`."""
     tokens, targets = split_redirections(strip_grouping(tokens))
     # `do env git push`: keywords and wrappers can alternate; `env -C dir` runs the command in dir
     tokens, where = strip_prefix(strip_grouping(tokens), cur or None)
@@ -955,7 +1103,7 @@ def decide_simple(tokens, cur, cwd, root, overrides, depth=0):
     name = os.path.basename(word)
     base = cur or cwd
     if where != (cur or None):   # the directory of this command only; the shell's own directory is `cur`
-        inner, _ = decide_simple(tokens, where, cwd, root, overrides, depth)
+        inner, _ = decide_simple(tokens, where, cwd, root, overrides, depth, reads)
         return inner, cur
 
     if name == "cd":
@@ -979,7 +1127,7 @@ def decide_simple(tokens, cur, cwd, root, overrides, depth=0):
         text = shell_command_string(args)
         if text:
             # a subshell keeps its own directory, but a checkout changes the repository: the branches are shared
-            inner, _ = decide_line(text, cwd, root, cur, overrides, depth + 1)
+            inner, _ = decide_line(text, cwd, root, cur, overrides, depth + 1, reads)
             return inner, cur
 
     if (name == "printenv" and not args) or (name == "env" and env_command(args) is None
@@ -995,10 +1143,13 @@ def decide_simple(tokens, cur, cwd, root, overrides, depth=0):
             for path in expand(arg, base):
                 if is_secret_path(path, base, root, include_dir=True):
                     return ("deny", SECRET_REASON), cur
+        if reads is not None and is_reader(name, args):
+            reads.extend(os.path.join(base, os.path.expanduser(path))
+                         for arg in args if not arg.startswith("-") for path in expand(arg, base))
     return ("allow", ""), cur
 
 
-def decide_line(command, cwd, root, cur, overrides, depth=0):
+def decide_line(command, cwd, root, cur, overrides, depth=0, reads=None):
     """(decision, directory after the line) for a command line run in `cur`.
 
     `overrides` maps each repository to the branch an earlier checkout of the line left it on; it is shared
@@ -1011,7 +1162,7 @@ def decide_line(command, cwd, root, cur, overrides, depth=0):
         marks = [int(m) for m in HEREDOC_MARK_RE.findall(segment)]
         scopes.extend([cur] * segment.count(GROUP_OPEN))
         tokens = tokenize(HEREDOC_MARK_RE.sub(" ", unmark(segment)))
-        verdict, cur = decide_simple(tokens, cur, cwd, root, overrides, depth)
+        verdict, cur = decide_simple(tokens, cur, cwd, root, overrides, depth, reads)
         verdicts.append(verdict)
         for _ in range(segment.count(GROUP_CLOSE)):
             if scopes:
@@ -1020,24 +1171,30 @@ def decide_line(command, cwd, root, cur, overrides, depth=0):
             for mark in marks:   # the body of a heredoc that a shell reads is a command line
                 body, quoted = bodies[mark]
                 if quoted or ("$" not in body and "`" not in body):
-                    verdicts.append(decide_line(body, cwd, root, cur, overrides, depth + 1)[0])
+                    verdicts.append(decide_line(body, cwd, root, cur, overrides, depth + 1, reads)[0])
     return max_decision(verdicts), cur
 
 
-def decide_shell(command, cwd, root):
+def decide_shell(command, cwd, root, session=None):
     if isinstance(command, list):
         command = " ".join(shlex.quote(str(c)) for c in command)
     if not isinstance(command, str):
         return "allow", ""
-    return decide_line(command, cwd, root, cwd, {})[0]
+    reads = []
+    verdict = decide_line(command, cwd, root, cwd, {}, 0, reads)[0]
+    if session is not None and verdict[0] == "allow":   # a blocked command shows nothing
+        note_reads(reads, cwd, root, session)
+    return verdict
 
 
 # ---------------------------------------------------------------------------------------------
 # entry point of the decision
 # ---------------------------------------------------------------------------------------------
 
-def decide(tool, tool_input, cwd, root):
-    """("allow" | "ask" | "deny", reason). Never raises: an internal error allows the call."""
+def decide(tool, tool_input, cwd, root, session=None):
+    """("allow" | "ask" | "deny", reason). Never raises: an internal error allows the call.
+
+    `session` is the `Session` of the calling agent; without one the instructions rule is skipped."""
     try:
         name = str(tool or "").lower()
         if not isinstance(tool_input, dict):
@@ -1045,10 +1202,10 @@ def decide(tool, tool_input, cwd, root):
         cwd = os.path.abspath(cwd or os.getcwd())
         root = os.path.abspath(root or DEFAULT_ROOT)
         if name in FILE_TOOLS or name in PATCH_TOOLS:
-            return decide_file_tool(name, tool_input, cwd, root)
+            return decide_file_tool(name, tool_input, cwd, root, session)
         if name in SHELL_TOOLS:
             command = tool_input.get("command", tool_input.get("cmd"))
-            return decide_shell(command, cwd, root)
+            return decide_shell(command, cwd, root, session)
         return "allow", ""
     except Exception as exc:  # a broken guard must never block the agent
         print("guard: internal error, allowing the call (%s: %s)" % (type(exc).__name__, exc), file=sys.stderr)
@@ -1091,11 +1248,24 @@ def read_call(agent, payload, default_cwd):
     return payload.get("tool_name"), payload.get("tool_input"), payload.get("cwd") or default_cwd
 
 
+def read_session(agent, payload):
+    """The `Session` of the payload; None when it names none. A Claude Code subagent adds its `agent_id`."""
+    if agent == "opencode":
+        return Session.of(payload.get("session"))
+    return Session.of(payload.get("session_id"), payload.get("agent_id"))
+
+
 def run_adapter(agent, stdin, stdout):
     try:
         payload = json.loads(stdin.read() or "{}")
-        tool, tool_input, cwd = read_call(agent, payload if isinstance(payload, dict) else {}, os.getcwd())
-        decision, reason = decide(tool, tool_input, cwd, DEFAULT_ROOT)
+        payload = payload if isinstance(payload, dict) else {}
+        session = read_session(agent, payload)
+        if payload.get("hook_event_name") == "PostCompact":   # the rules left the context with the compaction
+            if session is not None:
+                session.forget()
+            return 0
+        tool, tool_input, cwd = read_call(agent, payload, os.getcwd())
+        decision, reason = decide(tool, tool_input, cwd, DEFAULT_ROOT, session)
         text, code = respond(agent, decision, reason)
     except Exception as exc:
         print("guard: internal error, allowing the call (%s: %s)" % (type(exc).__name__, exc), file=sys.stderr)
@@ -1108,7 +1278,7 @@ def run_adapter(agent, stdin, stdout):
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Decide whether an agent tool call is allowed.")
     parser.add_argument("--agent", choices=("claude", "codex", "opencode"),
-                        help="read one tool call as JSON on stdin and answer in this agent's format")
+                        help="read one hook event as JSON on stdin and answer in this agent's format")
     parser.add_argument("--explain", metavar="COMMAND", help="print the decision for a shell command run in the current directory")
     args = parser.parse_args(argv)
     if args.explain is not None:

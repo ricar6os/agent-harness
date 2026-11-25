@@ -728,6 +728,274 @@ class AdapterTests(Fixture):
         self.assertTrue(os.access(str(GUARD), os.X_OK))
 
 
+def make_instructions_workspace(ws, repos="repos"):
+    """A meta root whose clones differ in the instructions they carry (no git: the rule reads files only)."""
+    (ws / "scripts").mkdir(parents=True)
+    for name in ("guard.py", "check.py"):
+        shutil.copy(str(REPO / "scripts" / name), str(ws / "scripts" / name))
+    (ws / "repos.json").write_text(json.dumps({"org": "acme", "root": repos, "repos": []}))
+    (ws / "env" / "api").mkdir(parents=True)
+    (ws / "env" / "api" / ".env").write_text("TOKEN=secret\n")
+    (ws / "README.md").write_text("x\n")
+    files = {
+        "app": {"AGENTS.md": "# rules\n"},
+        "other": {"AGENTS.md": "# rules\n"},
+        "both": {"AGENTS.md": "# rules\n", "CLAUDE.md": "@AGENTS.md\n\nUse pnpm.\n"},
+        "imports": {"AGENTS.md": "# rules\n", "CLAUDE.md": "@AGENTS.md\n"},
+        "claude": {"CLAUDE.md": "Use pnpm.\n"},
+        "bare": {},
+    }
+    for clone, contents in files.items():
+        (ws / repos / clone / "src").mkdir(parents=True)
+        (ws / repos / clone / "src" / "a.py").write_text("x\n")
+        for name, text in contents.items():
+            (ws / repos / clone / name).write_text(text)
+    os.symlink(str(ws / repos / "app"), str(ws / "shortcut"))
+
+
+# Each case is a list of steps (tool, input, decision, reason fragment) that one session runs in order.
+# `{root}` is the workspace root, which is also the cwd.
+PATCH = "*** Begin Patch\n*** Update File: %s\n@@\n-x\n+y\n*** End Patch\n"
+INSTRUCTIONS_CASES = {
+    "an edit before the read is denied, the same edit after it is allowed": [
+        ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "deny", "read {root}/repos/app/AGENTS.md before editing under {root}/repos/app/"),
+        ("Read", {"file_path": "{root}/repos/app/AGENTS.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "allow", ""),
+        ("Write", {"file_path": "{root}/repos/app/new.py", "content": "x"}, "allow", ""),
+    ],
+    "the block tells the agent not to ask the user": [
+        ("Write", {"file_path": "repos/app/new.py", "content": "x"}, "deny", "Do not ask the user about this block: read it in full, then repeat the edit."),
+    ],
+    "every edit tool and path spelling is covered": [
+        ("Write", {"file_path": "repos/app/new.py", "content": "x"}, "deny", "repos/app/AGENTS.md"),
+        ("MultiEdit", {"file_path": "{root}/repos/app/src/a.py", "edits": []}, "deny", "repos/app/AGENTS.md"),
+        ("NotebookEdit", {"notebook_path": "{root}/repos/app/n.ipynb"}, "deny", "repos/app/AGENTS.md"),
+        ("edit", {"filePath": "{root}/repos/app/src/a.py"}, "deny", "repos/app/AGENTS.md"),           # OpenCode spellings
+        ("edit", {"path": "repos/app/src/a.py"}, "deny", "repos/app/AGENTS.md"),
+        ("apply_patch", {"command": PATCH % "repos/app/src/a.py"}, "deny", "repos/app/AGENTS.md"),
+        ("apply_patch", {"command": PATCH % "README.md" + PATCH % "repos/app/src/a.py"}, "deny", "repos/app/AGENTS.md"),
+        ("Edit", {"file_path": "{root}/shortcut/src/a.py"}, "deny", "AGENTS.md"),                     # a symlink into the clone
+        ("Edit", {"file_path": "{root}/repos/app/AGENTS.md"}, "deny", "repos/app/AGENTS.md"),         # the rules themselves
+    ],
+    "an edit outside the clones, or in a clone without instructions, is allowed": [
+        ("Edit", {"file_path": "{root}/README.md"}, "allow", ""),
+        ("Write", {"file_path": "{root}/repos/new.txt", "content": "x"}, "allow", ""),                # the repos folder itself
+        ("Edit", {"file_path": "{root}/repos/bare/src/a.py"}, "allow", ""),
+        ("apply_patch", {"command": PATCH % "repos/bare/src/a.py"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/missing/src/a.py"}, "allow", ""),
+        ("Edit", {}, "allow", ""),
+    ],
+    "only a read of the instructions of that clone counts": [
+        ("Read", {"file_path": "{root}/repos/app/src/a.py"}, "allow", ""),
+        ("Read", {"file_path": "{root}/repos/other/AGENTS.md"}, "allow", ""),
+        ("Read", {"file_path": "{root}/repos/app/src/AGENTS.md"}, "allow", ""),                       # no such file
+        ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "deny", "repos/app/AGENTS.md"),
+        ("Edit", {"file_path": "{root}/repos/other/src/a.py"}, "allow", ""),
+    ],
+    "a read through a symlink counts": [
+        ("Read", {"file_path": "{root}/shortcut/AGENTS.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "allow", ""),
+    ],
+    "a CLAUDE.md with its own content is required too": [
+        ("Edit", {"file_path": "{root}/repos/both/src/a.py"}, "deny", "read {root}/repos/both/AGENTS.md and {root}/repos/both/CLAUDE.md before"),
+        ("Edit", {"file_path": "{root}/repos/both/src/a.py"}, "deny", "they hold the rules of that repository, and this session has not read them"),
+        ("Read", {"file_path": "{root}/repos/both/AGENTS.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/both/src/a.py"}, "deny", "read {root}/repos/both/CLAUDE.md before"),
+        ("Read", {"file_path": "{root}/repos/both/CLAUDE.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/both/src/a.py"}, "allow", ""),
+    ],
+    "a CLAUDE.md that only imports AGENTS.md is not required": [
+        ("Read", {"file_path": "{root}/repos/imports/AGENTS.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/imports/src/a.py"}, "allow", ""),
+    ],
+    "a clone with only a CLAUDE.md": [
+        ("Edit", {"file_path": "{root}/repos/claude/src/a.py"}, "deny", "read {root}/repos/claude/CLAUDE.md before"),
+        ("Read", {"file_path": "{root}/repos/claude/CLAUDE.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/claude/src/a.py"}, "allow", ""),
+    ],
+    "a shell command that shows the file counts as a read": [
+        ("Bash", {"command": "cat repos/app/AGENTS.md"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "allow", ""),
+        ("Bash", {"command": "cd repos/other && sed -n '1,200p' AGENTS.md"}, "allow", ""),
+        ("apply_patch", {"command": PATCH % "repos/other/src/a.py"}, "allow", ""),
+        ("Bash", {"command": "bash -lc 'nl -ba repos/both/AGENTS.md | head -50; cat repos/both/*.md'"}, "allow", ""),
+        ("Edit", {"file_path": "{root}/repos/both/src/a.py"}, "allow", ""),
+    ],
+    "a shell command that does not show the file is no read": [
+        ("Bash", {"command": "grep -n rule repos/app/AGENTS.md"}, "allow", ""),
+        ("Bash", {"command": "ls -la repos/app/AGENTS.md; echo repos/app/AGENTS.md; wc -l repos/app/AGENTS.md"}, "allow", ""),
+        ("Bash", {"command": "sed -i s/a/b/ repos/app/AGENTS.md"}, "allow", ""),
+        ("Bash", {"command": "sed -ni.bak 1p repos/app/AGENTS.md; sed --in-place=.bak 1p repos/app/AGENTS.md"}, "allow", ""),
+        ("Bash", {"command": "cat repos/app/src/a.py"}, "allow", ""),
+        ("Bash", {"command": "cat repos/app/AGENTS.md env/api/.env"}, "deny", "secret values"),       # blocked: it shows nothing
+        ("Bash", {"command": "cat repos/app/AGENTS.md; cat env/api/.env"}, "deny", "secret values"),
+        ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "deny", "repos/app/AGENTS.md"),
+    ],
+}
+
+
+class InstructionsTests(unittest.TestCase):
+    """An edit in a clone is denied until the session has read the instructions of that clone."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="guard-instructions-")).resolve()
+        cls.ws = cls.tmp / "ws"
+        make_instructions_workspace(cls.ws)
+        cls.custom = cls.tmp / "custom"
+        make_instructions_workspace(cls.custom, repos="clones")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(str(cls.tmp), True)
+
+    def session(self):
+        return guard.Session(tempfile.mkdtemp(prefix="state-", dir=str(self.tmp)))
+
+    def run_steps(self, steps, session, root=None):
+        root = str(root or self.ws)
+        for index, (tool, tool_input, expected, fragment) in enumerate(steps):
+            tool_input = {k: v.replace("{root}", root) if isinstance(v, str) else v for k, v in tool_input.items()}
+            with self.subTest(step=index, tool=tool, input=tool_input):
+                decision, reason = guard.decide(tool, tool_input, root, root, session)
+                self.assertEqual(expected, decision, reason)
+                self.assertIn(fragment.replace("{root}", root), reason)
+
+    def test_table(self):
+        for name, steps in INSTRUCTIONS_CASES.items():
+            with self.subTest(case=name):
+                self.run_steps(steps, self.session())
+
+    def test_without_a_session_nothing_is_blocked(self):
+        self.run_steps([("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "allow", "")], None)
+
+    def test_the_repos_folder_comes_from_the_manifest(self):
+        self.run_steps([
+            ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "allow", ""),     # `repos/` is no clone folder here
+            ("Edit", {"file_path": "{root}/clones/app/src/a.py"}, "deny", "read {root}/clones/app/AGENTS.md before"),
+            ("Bash", {"command": "cat clones/app/AGENTS.md"}, "allow", ""),
+            ("Edit", {"file_path": "{root}/clones/app/src/a.py"}, "allow", ""),
+        ], self.session(), self.custom)
+
+    def test_sessions_and_subagents_do_not_share_their_reads(self):
+        with mock.patch.object(guard.tempfile, "gettempdir", return_value=str(self.tmp / "states")):
+            main, same = guard.Session.of("s1"), guard.Session.of("s1")
+            subagent, other = guard.Session.of("s1", "a1"), guard.Session.of("s2")
+            self.assertIsNone(guard.Session.of(None))
+            self.assertIsNone(guard.Session.of(""))
+        read = [("Read", {"file_path": "{root}/repos/app/AGENTS.md"}, "allow", "")]
+        edit = ("Edit", {"file_path": "{root}/repos/app/src/a.py"})
+        self.run_steps(read + [edit + ("allow", "")], main)
+        self.run_steps([edit + ("allow", "")], same)
+        self.run_steps([edit + ("deny", "repos/app/AGENTS.md")], subagent)
+        self.run_steps([edit + ("deny", "repos/app/AGENTS.md")], other)
+        self.run_steps(read + [edit + ("allow", "")], subagent)
+
+    def test_forget_asks_for_the_read_again(self):
+        session = self.session()
+        read = ("Read", {"file_path": "{root}/repos/app/AGENTS.md"}, "allow", "")
+        edit = ("Edit", {"file_path": "{root}/repos/app/src/a.py"})
+        self.run_steps([read, edit + ("allow", "")], session)
+        session.forget()
+        self.run_steps([edit + ("deny", "repos/app/AGENTS.md"), read, edit + ("allow", "")], session)
+
+    def test_a_session_that_cannot_keep_markers_is_not_blocked(self):
+        blocker = self.tmp / "a-file"
+        blocker.write_text("x\n")
+        session = guard.Session(str(blocker / "state"))
+        self.run_steps([
+            ("Read", {"file_path": "{root}/repos/app/AGENTS.md"}, "allow", ""),
+            ("Edit", {"file_path": "{root}/repos/app/src/a.py"}, "allow", ""),
+        ], session)
+
+    def test_own_claude_md_matches_instructions_lib(self):
+        lib = REPO / "scripts" / "instructions-lib.sh"
+        cases = {"missing": None, "empty": "", "import": "@AGENTS.md\n", "import-spaces": "  @AGENTS.md  \n\n",
+                 "import-crlf": "@AGENTS.md\r\n", "own": "Use pnpm.\n", "both": "@AGENTS.md\nUse pnpm.\n",
+                 "other-import": "@docs/rules.md\n", "no-newline": "@AGENTS.md"}
+        for name, text in cases.items():
+            directory = self.tmp / "claude-md" / name
+            directory.mkdir(parents=True)
+            if text is not None:
+                (directory / "CLAUDE.md").write_bytes(text.encode())
+            shell = subprocess.run(["bash", "-c", 'source "$1"; own_claude_md "$2"', "bash", str(lib), str(directory)])
+            with self.subTest(case=name):
+                self.assertEqual(shell.returncode == 0, guard.own_claude_md(str(directory / "CLAUDE.md")))
+
+
+class InstructionsAdapterTests(unittest.TestCase):
+    """The session each agent names reaches the rule, through the copy of the script in a workspace with clones."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="guard-adapter-")).resolve()
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        self.ws = self.tmp / "ws"
+        make_instructions_workspace(self.ws)
+        (self.tmp / "state").mkdir()
+        self.rules = str(self.ws / "repos" / "app" / "AGENTS.md")
+        self.source = str(self.ws / "repos" / "app" / "src" / "a.py")
+
+    def call(self, agent, payload):
+        res = subprocess.run([sys.executable, str(self.ws / "scripts" / "guard.py"), "--agent", agent],
+                             input=json.dumps(payload), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True, env=dict(os.environ, TMPDIR=str(self.tmp / "state")))
+        self.assertEqual((0, ""), (res.returncode, res.stderr))
+        return res.stdout
+
+    def hook(self, agent, tool, tool_input, **ids):
+        out = self.call(agent, dict({"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input,
+                                     "cwd": str(self.ws)}, **ids))
+        return json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"] if out else ""
+
+    def opencode(self, tool, args, **ids):
+        answer = json.loads(self.call("opencode", dict({"tool": tool, "args": args, "cwd": str(self.ws)}, **ids)))
+        return answer.get("reason", "")
+
+    def test_claude(self):
+        edit = ("Edit", {"file_path": self.source})
+        self.assertIn("read %s before" % self.rules, self.hook("claude", *edit, session_id="s1"))
+        self.assertEqual("", self.hook("claude", "Read", {"file_path": self.rules}, session_id="s1"))
+        self.assertEqual("", self.hook("claude", *edit, session_id="s1"))
+        self.assertIn("read %s before" % self.rules, self.hook("claude", *edit, session_id="s2"))
+
+    def test_claude_subagent_reads_for_itself(self):
+        edit = ("Edit", {"file_path": self.source})
+        self.hook("claude", "Read", {"file_path": self.rules}, session_id="s1")
+        self.assertIn("read %s before" % self.rules, self.hook("claude", *edit, session_id="s1", agent_id="a1"))
+        self.assertEqual("", self.hook("claude", "Bash", {"command": "cat repos/app/AGENTS.md"}, session_id="s1", agent_id="a1"))
+        self.assertEqual("", self.hook("claude", *edit, session_id="s1", agent_id="a1"))
+
+    def test_claude_compaction_asks_for_the_read_again(self):
+        edit = ("Edit", {"file_path": self.source})
+        self.hook("claude", "Read", {"file_path": self.rules}, session_id="s1")
+        self.hook("claude", "Read", {"file_path": self.rules}, session_id="s1", agent_id="a1")
+        self.assertEqual("", self.call("claude", {"hook_event_name": "PostCompact", "session_id": "s1", "trigger": "auto"}))
+        self.assertIn("read %s before" % self.rules, self.hook("claude", *edit, session_id="s1"))
+        self.assertEqual("", self.hook("claude", *edit, session_id="s1", agent_id="a1"))   # its context was not compacted
+
+    def test_codex(self):
+        patch = ("apply_patch", {"command": PATCH % "repos/app/src/a.py"})
+        reason = self.hook("codex", *patch, session_id="s1", turn_id="t1")
+        self.assertIn("read %s before" % self.rules, reason)
+        self.assertNotIn("ask the user to run this command", reason)
+        self.assertEqual("", self.hook("codex", "Bash", {"command": "sed -n '1,200p' repos/app/AGENTS.md"}, session_id="s1"))
+        self.assertEqual("", self.hook("codex", *patch, session_id="s1", turn_id="t2"))
+
+    def test_opencode(self):
+        edit = ("edit", {"path": "repos/app/src/a.py"})
+        self.assertIn("read %s before" % self.rules, self.opencode(*edit, session="ses_1"))
+        self.assertEqual("", self.opencode("read", {"path": "repos/app/AGENTS.md"}, session="ses_1"))
+        self.assertEqual("", self.opencode(*edit, session="ses_1"))
+        self.assertEqual("", self.opencode("shell", {"command": "cat repos/app/AGENTS.md"}, session="ses_2"))
+        self.assertEqual("", self.opencode(*edit, session="ses_2"))
+
+    def test_a_payload_without_a_session_is_not_blocked(self):
+        self.assertEqual("", self.hook("claude", "Edit", {"file_path": self.source}))
+        self.assertEqual("", self.hook("codex", "apply_patch", {"command": PATCH % "repos/app/src/a.py"}))
+        self.assertEqual("", self.opencode("edit", {"path": "repos/app/src/a.py"}))
+        self.assertEqual("", self.call("claude", {"hook_event_name": "PostCompact"}))
+
+
 class ShippedConfigTests(unittest.TestCase):
     """The files that wire the script into each agent keep the shape their documentation asks for."""
 
@@ -738,6 +1006,9 @@ class ShippedConfigTests(unittest.TestCase):
         self.assertEqual("Bash|Read|Edit|Write|MultiEdit|NotebookEdit", group["matcher"])
         self.assertIn("$CLAUDE_PROJECT_DIR/scripts/guard.py", group["hooks"][0]["command"])
         self.assertIn("--agent claude", group["hooks"][0]["command"])
+        compact = data["hooks"]["PostCompact"][0]   # forgets what the session read: the rules left its context
+        self.assertNotIn("matcher", compact)
+        self.assertEqual(group["hooks"][0]["command"], compact["hooks"][0]["command"])
 
     def test_codex_hooks(self):
         group = json.loads((REPO / ".codex" / "hooks.json").read_text())["hooks"]["PreToolUse"][0]
@@ -780,6 +1051,7 @@ class ShippedConfigTests(unittest.TestCase):
         self.assertIn("execute.before", text)
         self.assertIn("scripts/guard.py", text)
         self.assertIn("--agent", text)
+        self.assertIn("session: event.sessionID", text)   # the instructions rule needs the session
         self.assertNotIn("import { Plugin }", text)   # no package import: a fresh clone needs no install
         self.assertFalse((REPO / ".opencode" / "package.json").exists())
 
