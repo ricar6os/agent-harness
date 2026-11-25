@@ -12,7 +12,9 @@ and verify with `make check` and `make test` instead of `make repo-check`.
    `--product <slug>`; do not edit `repos.json` for that.
 2. Read the repo's own instructions (`repos/<name>/AGENTS.md`, `CLAUDE.md`, `.claude/skills/`, and
    its generated `<repo>--instructions` skill) and follow them; they override anything in the
-   meta repo. Prefer the repo's own skills over root-level ones when both exist.
+   meta repo. Prefer the repo's own skills over root-level ones when both exist. The hook denies
+   an edit in the repo until you have read its `AGENTS.md` (and its `CLAUDE.md`, when it has its own
+   content): read the file the block names, then repeat the edit.
 3. Branch inside the repo; never commit to its default branch. In a meta worktree, repos start
    detached at `origin/<branch>`:
    `git -C repos/<name> checkout -b <type>/<short-slug>` (for example `feat/…`, `fix/…`, `chore/…`).

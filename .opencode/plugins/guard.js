@@ -13,7 +13,12 @@ export default {
       let answer
       try {
         const run = spawnSync("python3", [script, "--agent", "opencode"], {
-          input: JSON.stringify({ tool: event.tool, args: event.input, cwd: ctx.location.directory }),
+          input: JSON.stringify({
+            tool: event.tool,
+            args: event.input,
+            cwd: ctx.location.directory,
+            session: event.sessionID,
+          }),
           encoding: "utf8",
           timeout: 30000,
         })
