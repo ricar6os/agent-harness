@@ -24,7 +24,7 @@ scripts/link-skills.sh   link each repo's skills into .claude/skills/ and .agent
 scripts/check.py         deterministic convention checks (`make check`)
 scripts/guard.py         agent guardrails: decides each tool call (see "Guardrails")
 tests/                   tests of the checker, the guardrails, the scripts and the OpenSpec CLI contract (`make test`)
-.github/workflows/check.yml  runs the checks and the tests on every pull request
+.github/workflows/harness-checks.yml  runs the checks and the tests on every pull request
 repos/<name>/            org repos (git-ignored; each one is its own git repository)
 env/<name>/              local .env/secret files symlinked into repos/<name>/ by init.sh (git-ignored)
 openspec/                OpenSpec: schemas/spec-plan/ (our workflow), config.yaml, cli-version (the CLI version CI installs), changes/ (in-flight work), specs/ (main specs)
