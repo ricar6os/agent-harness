@@ -27,7 +27,7 @@ A rule skips, and says so, when it cannot run: the `openspec` CLI is missing, ol
 git work tree, or (`mcp-parity`) Python is older than 3.11, which cannot read `.codex/config.toml`. With `--require-tools` those
 cases are violations instead; CI uses it, so a skip never hides a failure there.
 
-CI (`.github/workflows/check.yml`) runs `scripts/check.py --require-tools` and the tests on
+CI (`.github/workflows/harness-checks.yml`) runs `scripts/check.py --require-tools` and the tests on
 every pull request and on pushes to `main`.
 
 ### AGENTS.md is a map
