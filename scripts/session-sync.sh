@@ -14,7 +14,8 @@ set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 git_dir="$(git -C "$ROOT_DIR" rev-parse --absolute-git-dir 2>/dev/null || true)"
-LOG="${git_dir:-${TMPDIR:-/tmp}}/session-sync.log"
+tmp_dir="${TMPDIR:-/tmp}"
+LOG="${git_dir:-${tmp_dir%/}}/session-sync.log"
 
 # Nobody can answer a credential prompt during a hook: fail the fetch instead of hanging.
 GIT_TERMINAL_PROMPT=0 make --no-print-directory -C "$ROOT_DIR" sync </dev/null >"$LOG" 2>&1
