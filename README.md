@@ -155,7 +155,7 @@ result as a PR in the meta.
 | `.claude/`, `.opencode/`, `.github/workflows/` | `openspec/changes/`, `openspec/specs/`, the `openspec-*` skills that `openspec init` installs |
 | `docs/agents/`, `openspec/schemas/`, `openspec/cli-version` | The `x-tracker` line and your own additions to the `context:` of `openspec/config.yaml` |
 | MCP config files (`.mcp.json`, `.codex/config.toml`, `opencode.json`) | `env/` |
-| Guardrail wiring (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/guard.js`) | |
+| Hook wiring: guardrails and session sync (`.claude/settings.json`, `.codex/hooks.json`, `.opencode/plugins/guard.js`) | |
 
 Improve harness files here first, with a PR to this repository, then merge them into each meta.
 

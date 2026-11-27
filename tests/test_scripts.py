@@ -338,5 +338,181 @@ class ListTests(Workspace):
         self.assertEqual("", r.stdout)
 
 
+def git(path, *args):
+    res = subprocess.run(["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+                         + list(args), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         universal_newlines=True)
+    if res.returncode != 0:
+        raise AssertionError("git %s failed: %s" % (" ".join(args), res.stderr))
+    return res.stdout.strip()
+
+
+class SyncFixture(unittest.TestCase):
+    """A workspace whose one repo, app, is cloned from a real (local, bare) origin."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="sync-test-")).resolve()
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        self.ws = self.tmp / "ws"
+        self.ws.mkdir()
+        shutil.copytree(str(REPO / "scripts"), str(self.ws / "scripts"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copy(str(REPO / "Makefile"), str(self.ws / "Makefile"))
+        self.origin = self.tmp / "app.git"
+        seed = self.tmp / "seed"
+        subprocess.run(["git", "init", "-q", "-b", "main", str(seed)], check=True)
+        git(seed, "commit", "-q", "--allow-empty", "-m", "first")
+        subprocess.run(["git", "clone", "-q", "--bare", str(seed), str(self.origin)], check=True)
+        self.seed = seed
+        (self.ws / "repos.json").write_text(json.dumps({"org": "acme", "root": "repos", "repos": [
+            {"name": "app", "url": str(self.origin), "branch": "main"}]}))
+        self.clone = self.ws / "repos" / "app"
+        self.assertEqual(0, self.sync().returncode)   # first run clones
+
+    def sync(self):
+        return run([BASH, str(self.ws / "scripts" / "init.sh")], self.ws)
+
+    def advance_origin(self):
+        git(self.seed, "commit", "-q", "--allow-empty", "-m", "upstream")
+        git(self.seed, "push", "-q", str(self.origin), "main")
+        return git(self.seed, "rev-parse", "HEAD")
+
+
+class SyncTests(SyncFixture):
+    """`scripts/init.sh` updating an existing clone: it moves only what holds no work in progress."""
+
+    def test_clean_default_branch_is_fast_forwarded(self):
+        upstream = self.advance_origin()
+        r = self.sync()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertEqual(("main", upstream), (git(self.clone, "branch", "--show-current"),
+                                              git(self.clone, "rev-parse", "HEAD")))
+
+    def test_clean_working_branch_is_fetched_but_not_moved(self):
+        git(self.clone, "checkout", "-q", "-b", "feat/x")
+        git(self.clone, "commit", "-q", "--allow-empty", "-m", "unpushed work")
+        work = git(self.clone, "rev-parse", "HEAD")
+        upstream = self.advance_origin()
+        r = self.sync()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertIn("! app is on branch feat/x; fetch only", r.stdout)
+        self.assertEqual(("feat/x", work), (git(self.clone, "branch", "--show-current"),
+                                            git(self.clone, "rev-parse", "HEAD")))
+        self.assertEqual(upstream, git(self.clone, "rev-parse", "origin/main"))   # fetched
+
+    def test_local_changes_are_fetched_but_not_moved(self):
+        (self.clone / "wip.txt").write_text("wip\n")
+        before = git(self.clone, "rev-parse", "HEAD")
+        self.advance_origin()
+        r = self.sync()
+        self.assertIn("! app has local changes; fetch only", r.stdout)
+        self.assertEqual(before, git(self.clone, "rev-parse", "HEAD"))
+
+    def test_detached_at_an_origin_commit_returns_to_the_default_branch(self):
+        git(self.clone, "checkout", "-q", "--detach")
+        upstream = self.advance_origin()
+        r = self.sync()
+        self.assertEqual(0, r.returncode, r.stdout + r.stderr)
+        self.assertEqual(("main", upstream), (git(self.clone, "branch", "--show-current"),
+                                              git(self.clone, "rev-parse", "HEAD")))
+
+    def test_detached_commit_on_no_remote_branch_is_not_moved(self):
+        git(self.clone, "checkout", "-q", "--detach")
+        git(self.clone, "commit", "-q", "--allow-empty", "-m", "detached work")
+        work = git(self.clone, "rev-parse", "HEAD")
+        self.advance_origin()
+        r = self.sync()
+        self.assertIn("! app is detached at a commit no remote branch has; fetch only", r.stdout)
+        self.assertEqual(work, git(self.clone, "rev-parse", "HEAD"))
+
+    def test_linked_worktree_follows_origin_detached_unless_on_a_working_branch(self):
+        shutil.move(str(self.clone), str(self.tmp / "main-clone"))
+        git(self.tmp / "main-clone", "worktree", "add", "-q", "--detach", str(self.clone), "origin/main")
+        upstream = self.advance_origin()
+        r = self.sync()
+        self.assertIn("~ app (moving worktree to origin/main)", r.stdout)
+        self.assertEqual(("", upstream), (git(self.clone, "branch", "--show-current"),
+                                          git(self.clone, "rev-parse", "HEAD")))
+        git(self.clone, "checkout", "-q", "-b", "feat/y")
+        self.advance_origin()
+        r = self.sync()
+        self.assertIn("! app is on branch feat/y; fetch only", r.stdout)
+        self.assertEqual(("feat/y", upstream), (git(self.clone, "branch", "--show-current"),
+                                                git(self.clone, "rev-parse", "HEAD")))
+
+
+class SessionSyncTests(SyncFixture):
+    """`scripts/session-sync.sh`, the SessionStart hook: one summary line, always exit 0."""
+
+    def session(self, cwd=None):
+        return run([BASH, str(self.ws / "scripts" / "session-sync.sh")], cwd or self.ws)
+
+    def test_prints_one_summary_line(self):
+        git(self.clone, "checkout", "-q", "-b", "feat/x")
+        r = self.session()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertEqual(1, len(r.stdout.splitlines()), r.stdout)
+        self.assertTrue(r.stdout.startswith("Session sync: 0 ok, 1 unchanged, 0 failed. "
+                                            "Not moved: app is on branch feat/x. Log: "), r.stdout)
+        log = r.stdout.strip().rsplit("Log: ", 1)[1]
+        self.assertIn("! app is on branch feat/x; fetch only", Path(log).read_text())
+
+    def test_a_failing_fetch_still_exits_zero(self):
+        shutil.rmtree(str(self.origin))   # as good as offline
+        r = self.session()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("1 failed", r.stdout)
+        self.assertIn("Failed: app.", r.stdout)
+
+    def test_a_broken_sync_still_exits_zero(self):
+        (self.ws / "repos.json").unlink()
+        r = self.session()
+        self.assertEqual(0, r.returncode, r.stderr)
+        self.assertIn("make sync stopped before syncing", r.stdout)
+
+
+class SessionStartHookTests(unittest.TestCase):
+    """The shipped SessionStart hooks run scripts/session-sync.sh and do nothing elsewhere."""
+
+    def hook(self, rel):
+        groups = json.loads((REPO / rel).read_text())["hooks"]["SessionStart"]
+        self.assertEqual(1, len(groups))
+        self.assertEqual("startup|resume", groups[0]["matcher"])
+        return groups[0]["hooks"][0]
+
+    def stub_workspace(self):
+        tmp = Path(tempfile.mkdtemp(prefix="session-hook-")).resolve()
+        self.addCleanup(shutil.rmtree, str(tmp), True)
+        ws = tmp / "ws"
+        (ws / "scripts").mkdir(parents=True)
+        (ws / "repos.json").write_text("{}")
+        (ws / "scripts" / "session-sync.sh").write_text('echo "synced $0"\n')
+        return tmp, ws
+
+    def run_hook(self, command, cwd, env=None):
+        return subprocess.run(["/bin/sh", "-c", command], cwd=str(cwd), stdout=subprocess.PIPE,
+                              stderr=subprocess.PIPE, universal_newlines=True,
+                              env=dict(os.environ, **(env or {})))
+
+    def test_claude_hook(self):
+        hook = self.hook(".claude/settings.json")
+        tmp, ws = self.stub_workspace()
+        res = self.run_hook(hook["command"], ws, {"CLAUDE_PROJECT_DIR": str(ws)})
+        self.assertEqual((0, "synced %s/scripts/session-sync.sh\n" % ws), (res.returncode, res.stdout))
+        res = self.run_hook(hook["command"], tmp, {"CLAUDE_PROJECT_DIR": str(tmp)})
+        self.assertEqual((0, ""), (res.returncode, res.stdout))
+
+    def test_codex_hook_finds_the_workspace_root_from_inside_a_clone(self):
+        hook = self.hook(".codex/hooks.json")
+        tmp, ws = self.stub_workspace()
+        nested = ws / "repos" / "app" / "src"
+        nested.mkdir(parents=True)
+        for cwd in (ws, nested):
+            res = self.run_hook(hook["command"], cwd)
+            self.assertEqual((0, "synced %s/scripts/session-sync.sh\n" % ws), (res.returncode, res.stdout))
+        res = self.run_hook(hook["command"], tmp)
+        self.assertEqual((0, ""), (res.returncode, res.stdout))
+
+
 if __name__ == "__main__":
     unittest.main()

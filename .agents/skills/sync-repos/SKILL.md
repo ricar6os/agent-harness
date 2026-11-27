@@ -15,7 +15,7 @@ Run `scripts/init.sh` from the workspace root. Restrict it when the task needs o
 - `--product <slug>` syncs the repos of one product (`products` in `repos.json`) and the shared ones.
 - `--no-update` clones what is missing and leaves existing clones as they are.
 
-A clone with local changes is fetched and left on its branch. Leave it that way and report it: the user decides what to do with those changes.
+A clone that has local changes, sits on a working branch, or is detached at a commit no remote branch holds is fetched and left where it is (`! <name> ...; fetch only`). Leave it that way and report it: the user decides what to do with that work.
 
 ## 2. Report
 

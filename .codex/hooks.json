@@ -12,6 +12,19 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "d=\"$PWD\"; while :; do if [ -f \"$d/repos.json\" ] && [ -f \"$d/scripts/session-sync.sh\" ]; then exec bash \"$d/scripts/session-sync.sh\"; fi; if [ \"$d\" = / ]; then exit 0; fi; d=$(dirname \"$d\"); done",
+            "timeout": 300,
+            "statusMessage": "Syncing the repos"
+          }
+        ]
+      }
     ]
   }
 }
