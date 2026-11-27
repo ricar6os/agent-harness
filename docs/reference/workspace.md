@@ -21,6 +21,7 @@ scripts/init.sh          clone/update the repos from the manifest into repos/
 scripts/status.sh        branch, local changes, ahead/behind, instructions and check command of each cloned repo
 scripts/repo-check.sh    run a repo's `check` command from the manifest inside its clone (`make repo-check REPO=<name>`)
 scripts/link-skills.sh   link each repo's skills into .claude/skills/ and .agents/skills/ (run by init.sh)
+scripts/session-sync.sh  run `make sync` at session start and print a one-line summary (see "Sync at session start")
 scripts/check.py         deterministic convention checks (`make check`)
 scripts/guard.py         agent guardrails: decides each tool call (see "Guardrails")
 tests/                   tests of the checker, the guardrails, the scripts and the OpenSpec CLI contract (`make test`)
@@ -31,8 +32,8 @@ openspec/                OpenSpec: schemas/spec-plan/ (our workflow), config.yam
 .agents/skills/          root-level skills, the canonical location (Codex/ChatGPT + Claude Code)
 .claude/skills/          Claude Code skills: symlinks to .agents/skills/ for every skill
 .mcp.json                project MCP servers (Linear)
-.claude/settings.json    Claude Code hook that runs scripts/guard.py
-.codex/hooks.json        Codex hook that runs scripts/guard.py
+.claude/settings.json    Claude Code hooks that run scripts/guard.py and scripts/session-sync.sh
+.codex/hooks.json        Codex hooks that run scripts/guard.py and scripts/session-sync.sh
 .opencode/plugins/guard.js  OpenCode plugin that runs scripts/guard.py
 AGENTS.md                instructions for AI agents (Claude Code, Codex and OpenCode load it directly; there is no CLAUDE.md)
 ```
@@ -93,6 +94,32 @@ branch before committing (step 3 of [`docs/agents/working-on-a-repo.md`](../agen
 worktree leaves a stale entry in the main clone, which the next sync prunes. Set
 `META_REPO_WORKTREES=0` to clone instead.
 
+### Sync at session start
+
+A `SessionStart` hook runs `scripts/session-sync.sh` when a session starts or resumes: in Claude
+Code from `.claude/settings.json`, in Codex from `.codex/hooks.json` (the hook walks up to the
+folder holding `repos.json`, like the guard's). The script runs `make sync`, writes the full log
+to `session-sync.log` in the checkout's git directory, and prints one line, which the client adds
+to the agent's context:
+
+```
+Session sync: 2 ok, 1 unchanged, 0 failed. Not moved: api is on branch feat/x. Log: .../session-sync.log
+```
+
+It always exits 0, so being offline or a failing fetch never blocks the session; git is told not
+to prompt for credentials. OpenCode has no session-start hook: there, and in any other client,
+the agent runs `make sync` itself (`AGENTS.md`, "Hard rules").
+
+The sync fetches every existing repo and moves it only when that loses no work:
+
+| The repo is | `make sync` |
+| ----------- | ----------- |
+| clean, on its default branch | fast-forwards it to `origin/<branch>` |
+| clean, detached at a commit a remote branch holds | checks out `<branch>` and fast-forwards it; a repo in a meta worktree moves to `origin/<branch>`, still detached |
+| with local changes | fetch only (`! <name> has local changes; fetch only`) |
+| clean, on another branch | fetch only (`! <name> is on branch <b>; fetch only`), so a resumed session finds its branch |
+| clean, detached at a commit no remote branch has | fetch only |
+
 Requirements: `git`, `jq`, `python3` (3.9 or newer, standard library only; 3.11 or newer for the `mcp-parity` rule), SSH access to GitHub
 (`gh auth status`) and, for the spec workflow, the `openspec` CLI at the version in `openspec/cli-version` or a newer one of the same major (`npm i -g "@fission-ai/openspec@$(cat openspec/cli-version)"`).
 
@@ -122,7 +149,7 @@ flags the repos that declare none. `path` is optional (defaults to `name`) and, 
 the repo belongs to, by slug (the same product a change records as `x-product` in `.openspec.yaml`); a repo
 without `products` is shared by every product. This is the only place that ties repos to products: `make sync
 PRODUCT=<slug>` and the OpenSpec workflow read it from here. Add or remove entries to control
-what gets cloned. `scripts/init.sh` never resets a repo with local changes (fetch only).
+what gets cloned. `scripts/init.sh` moves an existing repo only when that loses no work (see "Sync at session start").
 
 ## Working on repos
 

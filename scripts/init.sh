@@ -17,7 +17,12 @@
 # In a linked git worktree of meta, a missing repo that the main checkout has cloned is added
 # as a git worktree of that clone, detached at origin/<branch>, instead of cloned again: it is
 # fast, shares objects, and gives each meta worktree its own checkout. Create a branch in it
-# before committing. Updating such a repo moves it to origin/<branch> when it is clean.
+# before committing.
+#
+# Updating an existing repo fetches it, then moves it only when that loses no work: a clean repo
+# on <branch> is fast-forwarded, and a clean detached one goes back to <branch> (to origin/<branch>,
+# still detached, in a worktree) when a remote branch holds its commit. A repo with local
+# changes, on any other branch, or detached at a commit no remote branch has is fetched only.
 #
 # Finally scripts/link-skills.sh exposes the skills and instructions of every cloned repo to
 # agents launched from the meta root.
@@ -45,7 +50,7 @@ while [[ $# -gt 0 ]]; do
     --product) SYNC_PRODUCT="$2"; shift ;;
     --product=*) SYNC_PRODUCT="${1#--product=}" ;;
     --list) LIST=1 ;;
-    -h|--help) sed -n '2,31p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1" >&2; exit 2 ;;
   esac
   shift
@@ -140,17 +145,32 @@ while IFS=$'\t' read -r name url branch path products; do
     if [[ $UPDATE -eq 0 ]]; then
       echo "= $name (already present, not updated)"; link_env "$name" "$dest"; skipped=$((skipped+1)); continue
     fi
+    # Only a clean clone on the default branch, or detached at a commit some remote branch
+    # holds, is moved. Anything else may hold work in progress: fetch only, never move it.
+    keep=""
+    current="$(git -C "$dest" symbolic-ref --quiet --short HEAD || true)"
     if [[ -n "$(git -C "$dest" status --porcelain)" ]]; then
-      echo "! $name has local changes; fetch only"
-      git -C "$dest" fetch --quiet --all --prune || { failed=$((failed+1)); failed_names+=("$name"); continue; }
+      keep="has local changes"
+    elif [[ -n "$current" && "$current" != "$branch" ]]; then
+      keep="is on branch $current"
+    fi
+    if ! git -C "$dest" fetch --quiet --all --prune; then
+      echo "  failed to fetch $name" >&2; failed=$((failed+1)); failed_names+=("$name"); continue
+    fi
+    # A commit made while detached is on no branch: moving HEAD would leave it dangling.
+    if [[ -z "$keep" && -z "$current" ]] \
+       && [[ -z "$(git -C "$dest" for-each-ref --count=1 --contains HEAD refs/remotes/)" ]]; then
+      keep="is detached at a commit no remote branch has"
+    fi
+    if [[ -n "$keep" ]]; then
+      echo "! $name $keep; fetch only"
       link_env "$name" "$dest"
       skipped=$((skipped+1)); continue
     fi
-    if [[ -f "$dest/.git" ]]; then
+    if [[ -z "$current" && -f "$dest/.git" ]]; then
       # The branch may be checked out in another worktree, so follow origin detached.
       echo "~ $name (moving worktree to origin/$branch)"
-      if git -C "$dest" fetch --quiet --all --prune \
-         && git -C "$dest" checkout --quiet --detach "origin/$branch"; then
+      if git -C "$dest" checkout --quiet --detach "origin/$branch"; then
         link_env "$name" "$dest"
         ok=$((ok+1))
       else
@@ -159,9 +179,8 @@ while IFS=$'\t' read -r name url branch path products; do
       continue
     fi
     echo "~ $name (updating $branch)"
-    if git -C "$dest" fetch --quiet --all --prune \
-       && git -C "$dest" checkout --quiet "$branch" \
-       && git -C "$dest" pull --quiet --ff-only; then
+    if { [[ "$current" == "$branch" ]] || git -C "$dest" checkout --quiet "$branch"; } \
+       && git -C "$dest" merge --quiet --ff-only "origin/$branch"; then
       link_env "$name" "$dest"
       ok=$((ok+1))
     else

@@ -8,7 +8,7 @@ Write everything in this repository in English: code, comments, commits, scripts
 
 ## Hard rules
 
-- When `repos/` is empty or incomplete, run `make sync` before working.
+- At the start of a session, run `make sync` unless a `Session sync:` line is already in your context (the client's hook ran it). It moves only clean repos on their default branch; a repo with local changes or on a working branch stays as it is.
 - Secrets live in `env/<name>/` of the main checkout, which every worktree shares (`scripts/init.sh` symlinks them). Keep them out of every commit, here and in the repos, and out of the conversation.
 - Each `repos/<name>` is its own git repository: commit product code there. The root versions the manifest, the scripts, the specs and the skills.
 - Work on a branch. A default branch changes only through a pull request.
